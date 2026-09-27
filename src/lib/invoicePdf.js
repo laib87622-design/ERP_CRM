@@ -124,6 +124,11 @@ async function fetchInvoicePrintContext(invoice, client) {
 export async function openInvoicePdf(invoice, client = null) {
   if (typeof window === 'undefined') return;
 
+  const printWindow = window.open('', '_blank', 'width=1100,height=1400');
+  if (!printWindow) {
+    return;
+  }
+
   try {
     const { agency, client: resolvedClient, lines, totalPaid } = await fetchInvoicePrintContext(invoice, client);
 
@@ -506,19 +511,24 @@ export async function openInvoicePdf(invoice, client = null) {
       </html>
     `;
 
-    const printWindow = window.open('', '_blank', 'width=1100,height=1400');
-    if (!printWindow) {
-      return;
-    }
-
     printWindow.document.write(html);
     printWindow.document.close();
 
     setTimeout(() => {
-      printWindow.focus();
-      printWindow.print();
+      try {
+        printWindow.focus();
+        printWindow.print();
+      } catch (printError) {
+        console.warn('Invoice print preview could not be triggered automatically:', printError);
+      }
     }, 400);
   } catch (error) {
     console.error('Invoice PDF generation failed:', error);
+    try {
+      printWindow.document.write('<!doctype html><html><body><p>Unable to generate invoice preview.</p></body></html>');
+      printWindow.document.close();
+    } catch (writeError) {
+      console.warn('Failed to write invoice error page into popup:', writeError);
+    }
   }
 }

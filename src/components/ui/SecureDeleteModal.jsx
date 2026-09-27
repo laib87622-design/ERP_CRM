@@ -25,8 +25,7 @@ export default function SecureDeleteModal({
       try {
         const settings = await fetchAgencySettings();
         if (!cancelled) {
-          const nextPin = String(settings?.admin_pin ?? settings?.secure_delete_pin ?? expectedPin ?? '1234');
-          setResolvedPin(nextPin);
+          setResolvedPin(String(settings?.admin_pin ?? expectedPin ?? '1234'));
         }
       } catch {
         if (!cancelled) {

@@ -278,7 +278,6 @@ export const defaultAgencySettings = {
   bank_account: '',
   iban: '',
   admin_pin: '1234',
-  secure_delete_pin: '1234',
   enable_package_lines: true,
   package_type_descriptions: { ...defaultPackageTypeDescriptions },
   commission_rules: { ...defaultCommissionRules },
@@ -288,8 +287,7 @@ export const defaultAgencySettings = {
 export const normalizeAgencySettings = (settings = {}) => ({
   ...defaultAgencySettings,
   ...settings,
-  admin_pin: String(settings.admin_pin ?? settings.secure_delete_pin ?? defaultAgencySettings.admin_pin ?? '1234'),
-  secure_delete_pin: String(settings.secure_delete_pin ?? settings.admin_pin ?? defaultAgencySettings.secure_delete_pin ?? '1234'),
+  admin_pin: String(settings.admin_pin ?? defaultAgencySettings.admin_pin ?? '1234'),
   enable_package_lines: settings.enable_package_lines !== undefined ? Boolean(settings.enable_package_lines) : true,
   package_type_descriptions: normalizePackageTypeDescriptions(settings.package_type_descriptions || defaultAgencySettings.package_type_descriptions),
   commission_rules: normalizeCommissionRules(settings.commission_rules || defaultAgencySettings.commission_rules),

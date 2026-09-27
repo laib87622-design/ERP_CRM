@@ -89,41 +89,6 @@ const labels = {
   },
 };
 
-function ToastNotification({ item, handleDismiss, language, isDarkMode }) {
-  useEffect(() => {
-    if (!item?.id) return undefined;
-
-    const timer = window.setTimeout(() => {
-      handleDismiss(item.id);
-    }, 5000);
-
-    return () => window.clearTimeout(timer);
-  }, [item?.id, handleDismiss]);
-
-  return (
-    <div
-      className={`pointer-events-auto relative rounded-2xl border p-4 shadow-xl backdrop-blur-sm ${
-        item.type === 'warning'
-          ? 'border-amber-200 bg-amber-50 text-amber-900'
-          : item.type === 'success'
-            ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
-            : 'border-slate-200 bg-white text-slate-800'
-      } ${isDarkMode ? 'shadow-slate-900/50' : ''}`}
-    >
-      <button
-        type="button"
-        onClick={() => handleDismiss(item.id)}
-        className="absolute right-2 top-2 text-slate-400 hover:text-slate-600"
-        aria-label={language === 'en' ? 'Dismiss notification' : 'إغلاق الإشعار'}
-      >
-        ✕
-      </button>
-      <p className="pr-6 text-xs font-bold uppercase tracking-[0.18em] opacity-75">{item.title}</p>
-      <p className="mt-2 pr-6 text-sm leading-6">{item.message}</p>
-    </div>
-  );
-}
-
 function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [language, setLanguage] = useState(() => {
@@ -430,47 +395,51 @@ function App() {
                 </button>
 
                 {showNotificationCenter && (
-                  <div className={`absolute right-0 top-12 z-50 w-[380px] rounded-2xl border p-4 shadow-2xl ${isDarkMode ? 'border-slate-700 bg-[#111827] text-slate-100' : 'border-slate-200 bg-white text-brand-navy'}`}>
-                    <div className="mb-3 flex items-center justify-between">
-                      <div>
-                        <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-brand-gold">
-                          {language === 'en' ? 'Notification center' : 'مركز الإشعارات'}
-                        </p>
-                        <h3 className="mt-1 text-lg font-semibold text-brand-navy">
-                          {language === 'en' ? `Alerts (${unreadCount} unread)` : `التنبيهات (${unreadCount} غير مقروءة)`}
-                        </h3>
+                  <div className={`absolute right-0 top-12 z-50 w-[400px] overflow-hidden rounded-[22px] border shadow-[0_24px_80px_rgba(15,23,42,0.24)] backdrop-blur-xl ${isDarkMode ? 'border-slate-700 bg-slate-950/95 text-slate-100' : 'border-slate-200 bg-white/95 text-brand-navy'}`}>
+                    <div className={`border-b px-4 py-4 ${isDarkMode ? 'border-slate-700 bg-slate-900/80' : 'border-slate-200 bg-slate-50/80'}`}>
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-brand-gold">
+                            {language === 'en' ? 'Notification center' : 'مركز الإشعارات'}
+                          </p>
+                          <h3 className={`mt-1 text-lg font-semibold ${isDarkMode ? 'text-slate-50' : 'text-brand-navy'}`}>
+                            {language === 'en' ? `Alerts (${unreadCount} unread)` : `التنبيهات (${unreadCount} غير مقروءة)`}
+                          </h3>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setShowNotificationCenter(false)}
+                          className={`rounded-lg p-1.5 transition ${isDarkMode ? 'text-slate-300 hover:bg-slate-800 hover:text-slate-50' : 'text-slate-500 hover:bg-slate-100 hover:text-brand-navy'}`}
+                          aria-label={language === 'en' ? 'Close notification center' : 'إغلاق مركز الإشعارات'}
+                        >
+                          <X size={16} />
+                        </button>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => setShowNotificationCenter(false)}
-                        className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-brand-navy"
-                        aria-label={language === 'en' ? 'Close notification center' : 'إغلاق مركز الإشعارات'}
-                      >
-                        <X size={16} />
-                      </button>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {['all', 'unread', 'read'].map((filter) => (
+                          <button
+                            key={filter}
+                            type="button"
+                            onClick={() => setNotificationFilter(filter)}
+                            className={`rounded-full px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] transition ${
+                              notificationFilter === filter
+                                ? 'bg-brand-navy text-white shadow-sm'
+                                : isDarkMode
+                                  ? 'border border-slate-700 bg-slate-800 text-slate-200'
+                                  : 'border border-slate-200 bg-white text-brand-navy'
+                            }`}
+                          >
+                            {filter === 'all' ? (language === 'en' ? 'All' : 'الكل') : filter === 'unread' ? (language === 'en' ? 'Unread' : 'غير المقروءة') : language === 'en' ? 'Read' : 'المقروءة'}
+                          </button>
+                        ))}
+                      </div>
                     </div>
 
-                    <div className="mb-3 flex flex-wrap gap-2">
-                      {['all', 'unread', 'read'].map((filter) => (
-                        <button
-                          key={filter}
-                          type="button"
-                          onClick={() => setNotificationFilter(filter)}
-                          className={`rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${
-                            notificationFilter === filter
-                              ? 'bg-brand-navy text-white'
-                              : 'border border-slate-200 bg-brand-surface text-brand-navy'
-                          }`}
-                        >
-                          {filter === 'all' ? (language === 'en' ? 'All' : 'الكل') : filter === 'unread' ? (language === 'en' ? 'Unread' : 'غير المقروءة') : language === 'en' ? 'Read' : 'المقروءة'}
-                        </button>
-                      ))}
-                    </div>
-
-                    <div className="space-y-3">
+                    <div className="max-h-[460px] space-y-3 overflow-y-auto p-3">
                       {filteredNotifications.length === 0 ? (
-                        <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-6 text-center text-sm text-slate-500">
+                        <div className={`rounded-2xl border border-dashed px-3 py-8 text-center text-sm ${isDarkMode ? 'border-slate-700 bg-slate-900 text-slate-400' : 'border-slate-200 bg-slate-50 text-slate-500'}`}>
                           {language === 'en' ? 'No notifications yet.' : 'لا توجد إشعارات حتى الآن.'}
                         </div>
                       ) : (
@@ -482,18 +451,24 @@ function App() {
                               <button
                                 type="button"
                                 onClick={() => handleNotificationClick(item)}
-                                className={`block w-full rounded-xl border p-3 pr-9 text-left transition ${
-                                  item.is_read ? 'border-slate-200 bg-brand-surface' : 'border-brand-gold/40 bg-amber-50'
+                                className={`block w-full rounded-2xl border p-3 pr-9 text-left transition-all duration-200 ${
+                                  item.is_read
+                                    ? isDarkMode
+                                      ? 'border-slate-700 bg-slate-900/90 hover:border-slate-600'
+                                      : 'border-slate-200 bg-slate-50/80 hover:border-slate-300'
+                                    : isDarkMode
+                                      ? 'border-brand-gold/40 bg-gradient-to-r from-amber-500/10 to-transparent hover:border-brand-gold/60'
+                                      : 'border-brand-gold/30 bg-gradient-to-r from-amber-50 to-white hover:border-brand-gold/50'
                                 }`}
                               >
                                 <div className="mb-2 flex items-center justify-between gap-3">
-                                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-brand-gold">{localizedItem.title}</p>
-                                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${notificationChannels[item.channel || 'system']?.tone || 'bg-slate-100 text-slate-700'}`}>
+                                  <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-brand-gold">{localizedItem.title}</p>
+                                  <span className={`rounded-full px-2 py-0.5 text-[9px] font-semibold ${notificationChannels[item.channel || 'system']?.tone || (isDarkMode ? 'bg-slate-700 text-slate-200' : 'bg-slate-100 text-slate-700')}`}>
                                     {notificationChannels[item.channel || 'system']?.label || (language === 'en' ? 'System' : 'النظام')}
                                   </span>
                                 </div>
-                                <p className="text-sm leading-6 text-slate-700">{localizedItem.message}</p>
-                                <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-400">
+                                <p className={`text-sm leading-6 ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{localizedItem.message}</p>
+                                <div className={`mt-3 flex items-center justify-between gap-2 text-[11px] ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                                   <span>
                                     {new Date(item.created_at || item.createdAt).toLocaleString(language === 'ar' ? 'ar-DZ' : 'en-GB', {
                                       dateStyle: 'short',
@@ -501,7 +476,7 @@ function App() {
                                     })}
                                   </span>
                                   {!item.is_read && (
-                                    <span className="rounded-full bg-brand-gold px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-brand-navy">
+                                    <span className="rounded-full bg-brand-gold px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-brand-navy">
                                       {language === 'en' ? 'New' : 'جديد'}
                                     </span>
                                   )}
@@ -511,7 +486,7 @@ function App() {
                               <button
                                 type="button"
                                 onClick={() => handleDismiss(item.id)}
-                                className="absolute right-2 top-2 text-slate-400 hover:text-slate-600"
+                                className={`absolute right-2 top-2 rounded-full p-1.5 transition ${isDarkMode ? 'text-slate-400 hover:bg-slate-800 hover:text-slate-100' : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600'}`}
                                 aria-label={language === 'en' ? 'Dismiss notification' : 'إغلاق الإشعار'}
                               >
                                 ✕
@@ -564,18 +539,6 @@ function App() {
           </header>
 
           <main className={`flex-1 overflow-y-auto p-8 transition-colors ${isDarkMode ? 'bg-[#0a1120]' : 'bg-brand-surface'}`}>
-            <div className="pointer-events-none fixed right-4 top-20 z-[80] flex w-[min(360px,calc(100vw-2rem))] flex-col gap-3">
-              {notifications.slice(0, 3).map((item) => (
-                <ToastNotification
-                  key={item.id}
-                  item={item}
-                  handleDismiss={handleDismiss}
-                  language={language}
-                  isDarkMode={isDarkMode}
-                />
-              ))}
-            </div>
-
             <Routes>
               <Route path="/" element={<DashboardHome language={language} ui={ui} />} />
               <Route path="/login" element={<Login language={language} setLanguage={setLanguage} />} />
