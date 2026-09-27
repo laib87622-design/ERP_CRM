@@ -1,0 +1,340 @@
+-- ==============================================================================
+-- 1. ENUMS (Custom Data Types)
+-- ==============================================================================
+CREATE TYPE user_role AS ENUM ('super_admin', 'sales_agent', 'cashier', 'viewer');
+CREATE TYPE payment_method AS ENUM ('cash', 'credit_card', 'baridimob');
+CREATE TYPE booking_status AS ENUM ('pending', 'confirmed', 'cancelled');
+CREATE TYPE invoice_status AS ENUM ('pending', 'paid', 'overdue');
+CREATE TYPE expense_category AS ENUM ('electricity', 'salary', 'rent', 'marketing', 'other');
+
+-- ==============================================================================
+-- 2. TABLES
+-- ==============================================================================
+
+-- PROFILES (Linked to Supabase Auth)
+CREATE TABLE profiles (
+    id UUID REFERENCES auth.users(id) PRIMARY KEY,
+    full_name TEXT NOT NULL,
+    role user_role DEFAULT 'viewer' NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- TREASURY (Bank Module)
+CREATE TABLE treasury (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_type payment_method NOT NULL UNIQUE, -- Only one row per type (cash, credit_card, baridimob)
+    current_balance NUMERIC DEFAULT 0.00 NOT NULL,
+    last_updated TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- SUPPLIERS
+CREATE TABLE suppliers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    type TEXT NOT NULL, -- e.g., 'Hotel', 'Airline', 'B2B Platform'
+    star_rating NUMERIC(2,1) DEFAULT 0.0,
+    supplier_debt NUMERIC DEFAULT 0.00, -- Running debt owed to supplier
+    bookings_count INTEGER DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- CLIENTS
+CREATE TABLE clients (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    full_name TEXT NOT NULL,
+    phone TEXT,
+    email TEXT,
+    birth_date DATE,
+    sex TEXT,
+    passport_number TEXT,
+    passport_validity_date DATE,
+    passport_link TEXT,
+    marital_status TEXT,
+    civil_status TEXT,
+    father_name TEXT,
+    mother_name TEXT,
+    visa_location TEXT,
+    address TEXT,
+    notes TEXT,
+    companions JSONB DEFAULT '[]'::jsonb,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE clients
+    ADD COLUMN IF NOT EXISTS birth_date DATE,
+    ADD COLUMN IF NOT EXISTS sex TEXT,
+    ADD COLUMN IF NOT EXISTS passport_validity_date DATE,
+    ADD COLUMN IF NOT EXISTS passport_link TEXT,
+    ADD COLUMN IF NOT EXISTS marital_status TEXT,
+    ADD COLUMN IF NOT EXISTS civil_status TEXT,
+    ADD COLUMN IF NOT EXISTS father_name TEXT,
+    ADD COLUMN IF NOT EXISTS mother_name TEXT,
+    ADD COLUMN IF NOT EXISTS visa_location TEXT,
+    ADD COLUMN IF NOT EXISTS address TEXT,
+    ADD COLUMN IF NOT EXISTS companions JSONB DEFAULT '[]'::jsonb;
+
+-- PACKAGES
+CREATE TABLE packages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title TEXT NOT NULL,
+    destination TEXT NOT NULL,
+    price NUMERIC NOT NULL,
+    inclusions JSONB DEFAULT '[]'::jsonb, -- Array of strings/tags
+    is_available BOOLEAN DEFAULT true,
+    supplier_id UUID REFERENCES suppliers(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- BOOKINGS
+CREATE TABLE bookings (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    client_id UUID REFERENCES clients(id) ON DELETE CASCADE,
+    package_id UUID REFERENCES packages(id),
+    service_id UUID REFERENCES service_templates(id) ON DELETE SET NULL,
+    supplier_id UUID REFERENCES suppliers(id),
+    selling_price NUMERIC DEFAULT 0.00,
+    status booking_status DEFAULT 'pending',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE bookings
+    ADD COLUMN IF NOT EXISTS service_id UUID REFERENCES service_templates(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS selling_price NUMERIC DEFAULT 0.00;
+
+-- INVOICES (Generated from Bookings)
+CREATE TABLE invoices (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    booking_id UUID REFERENCES bookings(id) ON DELETE CASCADE,
+    client_id UUID REFERENCES clients(id) ON DELETE CASCADE,
+    invoice_number SERIAL,
+    subtotal NUMERIC NOT NULL,
+    apply_tva BOOLEAN DEFAULT false,
+    tva_amount NUMERIC DEFAULT 0.00,
+    grand_total NUMERIC NOT NULL,
+    status invoice_status DEFAULT 'pending',
+    due_date DATE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- EXPENSES
+CREATE TABLE expenses (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    category expense_category NOT NULL,
+    amount NUMERIC NOT NULL,
+    method payment_method NOT NULL,
+    recorded_by UUID REFERENCES profiles(id),
+    date TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- SUPPLIER PAYMENTS
+CREATE TABLE supplier_payments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    supplier_id UUID NOT NULL REFERENCES suppliers(id) ON DELETE CASCADE,
+    amount NUMERIC NOT NULL,
+    payment_method payment_method NOT NULL,
+    note TEXT,
+    paid_at TIMESTAMPTZ DEFAULT NOW(),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE invoices
+    ADD COLUMN IF NOT EXISTS payment_method payment_method,
+    ADD COLUMN IF NOT EXISTS paid_at TIMESTAMPTZ;
+
+CREATE OR REPLACE FUNCTION public.generate_invoice_reference()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.invoice_number IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  UPDATE public.invoices
+  SET reference = format(
+    'INV-%s-%s',
+    to_char(CURRENT_DATE, 'YYMM'),
+    lpad(CAST(invoice_number AS text), 5, '0')
+  )
+  WHERE id = NEW.id;
+
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_generate_invoice_reference ON public.invoices;
+CREATE TRIGGER trg_generate_invoice_reference
+AFTER INSERT ON public.invoices
+FOR EACH ROW
+EXECUTE FUNCTION public.generate_invoice_reference();
+
+-- TASKS
+CREATE TABLE tasks (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'todo' CHECK (status IN ('todo', 'in_progress', 'done')),
+    priority TEXT NOT NULL DEFAULT 'Medium' CHECK (priority IN ('Low', 'Medium', 'High')),
+    client_id UUID REFERENCES clients(id) ON DELETE SET NULL,
+    supplier_id UUID REFERENCES suppliers(id) ON DELETE SET NULL,
+    package_id UUID REFERENCES packages(id) ON DELETE SET NULL,
+    service_id UUID REFERENCES service_templates(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE tasks
+    ADD CONSTRAINT tasks_client_id_fk FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL,
+    ADD CONSTRAINT tasks_supplier_id_fk FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE SET NULL,
+    ADD CONSTRAINT tasks_package_id_fk FOREIGN KEY (package_id) REFERENCES packages(id) ON DELETE SET NULL,
+    ADD CONSTRAINT tasks_service_id_fk FOREIGN KEY (service_id) REFERENCES service_templates(id) ON DELETE SET NULL;
+
+-- EMPLOYEE COMMISSIONS
+CREATE TABLE employee_commissions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id UUID REFERENCES profiles(id),
+    booking_id UUID REFERENCES bookings(id),
+    commission_amount NUMERIC NOT NULL,
+    status invoice_status DEFAULT 'pending',
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- SERVICE TEMPLATES (Visa, Omra, etc.)
+CREATE TABLE service_templates (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    country_id TEXT NOT NULL,
+    visa_type_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    client_id UUID REFERENCES clients(id),
+    supplier_id UUID REFERENCES suppliers(id),
+    package_id UUID REFERENCES packages(id),
+    stages_data JSONB DEFAULT '[]'::jsonb NOT NULL,
+    UNIQUE(country_id, visa_type_id) -- Prevents duplicates for upserts
+);
+
+ALTER TABLE service_templates
+    ADD COLUMN IF NOT EXISTS client_id UUID REFERENCES clients(id),
+    ADD COLUMN IF NOT EXISTS supplier_id UUID REFERENCES suppliers(id),
+    ADD COLUMN IF NOT EXISTS package_id UUID REFERENCES packages(id);
+
+-- CLIENT SERVICES (Cloned from Templates)
+CREATE TABLE client_services (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    client_id UUID REFERENCES clients(id) ON DELETE CASCADE,
+    template_id UUID REFERENCES service_templates(id),
+    stages_data JSONB DEFAULT '[]'::jsonb NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE service_stages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    service_template_id UUID REFERENCES service_templates(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    sort_order INTEGER DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE service_steps (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    stage_id UUID REFERENCES service_stages(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    sort_order INTEGER DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE service_items (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    step_id UUID REFERENCES service_steps(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    drive_url TEXT,
+    is_done BOOLEAN DEFAULT false,
+    sort_order INTEGER DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ==============================================================================
+-- 3. ROW LEVEL SECURITY (RLS) POLICIES
+-- ==============================================================================
+
+-- Enable RLS on all tables
+ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE treasury ENABLE ROW LEVEL SECURITY;
+ALTER TABLE suppliers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE clients ENABLE ROW LEVEL SECURITY;
+ALTER TABLE packages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bookings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
+ALTER TABLE expenses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE employee_commissions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE service_templates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE client_services ENABLE ROW LEVEL SECURITY;
+ALTER TABLE service_stages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE service_steps ENABLE ROW LEVEL SECURITY;
+ALTER TABLE service_items ENABLE ROW LEVEL SECURITY;
+
+-- Helper function to get current user role
+CREATE OR REPLACE FUNCTION get_user_role() RETURNS user_role AS $$
+  SELECT role FROM public.profiles WHERE id = auth.uid() LIMIT 1;
+$$ LANGUAGE sql SECURITY DEFINER;
+
+-- SUPER ADMIN POLICIES (Full Access to Everything)
+CREATE POLICY "Super Admins bypass RLS" ON profiles FOR ALL USING (get_user_role() = 'super_admin');
+CREATE POLICY "Super Admins bypass RLS" ON treasury FOR ALL USING (get_user_role() = 'super_admin');
+CREATE POLICY "Super Admins bypass RLS" ON suppliers FOR ALL USING (get_user_role() = 'super_admin');
+CREATE POLICY "Super Admins bypass RLS" ON clients FOR ALL USING (get_user_role() = 'super_admin');
+CREATE POLICY "Super Admins bypass RLS" ON packages FOR ALL USING (get_user_role() = 'super_admin');
+CREATE POLICY "Super Admins bypass RLS" ON bookings FOR ALL USING (get_user_role() = 'super_admin');
+CREATE POLICY "Super Admins bypass RLS" ON invoices FOR ALL USING (get_user_role() = 'super_admin');
+CREATE POLICY "Super Admins bypass RLS" ON expenses FOR ALL USING (get_user_role() = 'super_admin');
+CREATE POLICY "Super Admins bypass RLS" ON employee_commissions FOR ALL USING (get_user_role() = 'super_admin');
+CREATE POLICY "Super Admins bypass RLS" ON service_templates FOR ALL USING (get_user_role() = 'super_admin');
+CREATE POLICY "Super Admins bypass RLS" ON client_services FOR ALL USING (get_user_role() = 'super_admin');
+CREATE POLICY "Super Admins bypass RLS" ON service_stages FOR ALL USING (get_user_role() = 'super_admin');
+CREATE POLICY "Super Admins bypass RLS" ON service_steps FOR ALL USING (get_user_role() = 'super_admin');
+CREATE POLICY "Super Admins bypass RLS" ON service_items FOR ALL USING (get_user_role() = 'super_admin');
+
+CREATE POLICY "Sales Agents can manage service templates" ON service_templates
+FOR INSERT WITH CHECK (get_user_role() IN ('super_admin', 'sales_agent'));
+CREATE POLICY "Sales Agents can manage service templates" ON service_templates
+FOR UPDATE USING (get_user_role() IN ('super_admin', 'sales_agent'))
+WITH CHECK (get_user_role() IN ('super_admin', 'sales_agent'));
+CREATE POLICY "Sales Agents can manage service templates" ON service_templates
+FOR DELETE USING (get_user_role() IN ('super_admin', 'sales_agent'));
+
+CREATE POLICY "Sales Agents can manage service stages" ON service_stages
+FOR ALL USING (get_user_role() IN ('super_admin', 'sales_agent'))
+WITH CHECK (get_user_role() IN ('super_admin', 'sales_agent'));
+CREATE POLICY "Sales Agents can manage service steps" ON service_steps
+FOR ALL USING (get_user_role() IN ('super_admin', 'sales_agent'))
+WITH CHECK (get_user_role() IN ('super_admin', 'sales_agent'));
+CREATE POLICY "Sales Agents can manage service items" ON service_items
+FOR ALL USING (get_user_role() IN ('super_admin', 'sales_agent'))
+WITH CHECK (get_user_role() IN ('super_admin', 'sales_agent'));
+
+-- VIEWERS (Read-Only Access)
+CREATE POLICY "Viewers can read clients" ON clients FOR SELECT USING (get_user_role() = 'viewer');
+CREATE POLICY "Viewers can read packages" ON packages FOR SELECT USING (get_user_role() = 'viewer');
+CREATE POLICY "Viewers can read bookings" ON bookings FOR SELECT USING (get_user_role() = 'viewer');
+
+-- SALES AGENTS (CRM Access, No Financial Editing)
+CREATE POLICY "Sales Agents can manage clients" ON clients FOR ALL USING (get_user_role() = 'sales_agent');
+CREATE POLICY "Sales Agents can manage bookings" ON bookings FOR ALL USING (get_user_role() = 'sales_agent');
+CREATE POLICY "Sales Agents can view packages" ON packages FOR SELECT USING (get_user_role() = 'sales_agent');
+CREATE POLICY "Sales Agents can view suppliers" ON suppliers FOR SELECT USING (get_user_role() = 'sales_agent');
+CREATE POLICY "Sales Agents can read their own commissions" ON employee_commissions FOR SELECT USING (get_user_role() = 'sales_agent' AND agent_id = auth.uid());
+CREATE POLICY "Sales Agents can manage client services" ON client_services FOR ALL USING (get_user_role() = 'sales_agent');
+CREATE POLICY "Sales Agents can view templates" ON service_templates FOR SELECT USING (get_user_role() = 'sales_agent');
+
+-- CASHIERS (ERP Access, No CRM Deletion)
+CREATE POLICY "Cashiers can manage treasury" ON treasury FOR ALL USING (get_user_role() = 'cashier');
+CREATE POLICY "Cashiers can manage invoices" ON invoices FOR ALL USING (get_user_role() = 'cashier');
+CREATE POLICY "Cashiers can manage expenses" ON expenses FOR ALL USING (get_user_role() = 'cashier');
+CREATE POLICY "Cashiers can read bookings" ON bookings FOR SELECT USING (get_user_role() = 'cashier');
+CREATE POLICY "Cashiers can read clients" ON clients FOR SELECT USING (get_user_role() = 'cashier');
+
+-- ==============================================================================
+-- 4. INITIALIZATION (Seed the Treasury Accounts)
+-- ==============================================================================
+INSERT INTO treasury (account_type, current_balance) VALUES 
+  ('cash', 0.00), 
+  ('credit_card', 0.00), 
+  ('baridimob', 0.00)
+ON CONFLICT (account_type) DO NOTHING;
