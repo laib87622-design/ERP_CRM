@@ -495,11 +495,11 @@ function App() {
               <Route path="/settings/team" element={<AgencySettings language={language} ui={ui} activeSection="team" />} />
               <Route path="/role-dashboard" element={<RoleDashboard language={language} ui={ui} />} />
               <Route path="/bank" element={<Bank language={language} ui={ui} />} />
-              <Route path="/bank/new-account" element={<NewFinancialAccount />} />
-              <Route path="/bank/entries" element={<BankEntriesLedger />} />
-              <Route path="/bank/internal-transfer" element={<InternalTransfer />} />
-              <Route path="/bank/miscellaneous-payment" element={<MiscellaneousPayment />} />
-              <Route path="/bank/accounts/:accountId" element={<FinancialAccountDetail />} />
+              <Route path="/bank/new-account" element={<NewFinancialAccount language={language} />} />
+              <Route path="/bank/entries" element={<BankEntriesLedger language={language} />} />
+              <Route path="/bank/internal-transfer" element={<InternalTransfer language={language} />} />
+              <Route path="/bank/miscellaneous-payment" element={<MiscellaneousPayment language={language} />} />
+              <Route path="/bank/accounts/:accountId" element={<FinancialAccountDetail language={language} />} />
               <Route path="/cash-flow" element={<CashFlowReport language={language} ui={ui} />} />
               <Route path="/reconciliation" element={<TreasuryReconciliation language={language} ui={ui} />} />
               <Route path="*" element={<Navigate to="/" replace />} />

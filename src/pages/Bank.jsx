@@ -75,6 +75,7 @@ const Bank = ({ language = 'en', role: initialRole = 'viewer' }) => {
 
   const canView = role === 'super_admin' || role === 'cashier' || role === 'sales_agent';
   const canWrite = role === 'super_admin' || role === 'cashier';
+  const t = translations[language] || translations.en;
 
   const loadRole = async () => {
     try {
