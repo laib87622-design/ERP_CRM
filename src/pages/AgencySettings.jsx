@@ -1013,8 +1013,17 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
       {canEdit && section === 'package' && (
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="rounded-3xl border border-slate-200 bg-brand-card p-6 shadow-sm">
-            <div className="mb-4">
+            <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <h3 className="text-lg font-semibold text-brand-navy">{commissionText.packageDefaults}</h3>
+              <label className="inline-flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-brand-navy">
+                <input
+                  type="checkbox"
+                  checked={Boolean(settings.enable_package_lines !== false)}
+                  onChange={(event) => updateField('enable_package_lines', event.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-brand-gold focus:ring-brand-gold"
+                />
+                Enable Package Lines in Bookings
+              </label>
             </div>
             <div className="grid gap-4 md:grid-cols-2">
               {packageTypeDescriptionFields.map((field) => (

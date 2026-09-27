@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Building2, CreditCard, Landmark, Pencil, Trash2, Wallet } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/currency';
@@ -17,6 +17,7 @@ const emptyForm = {
 export default function FinancialAccountDetail() {
   const { accountId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [account, setAccount] = useState(null);
   const [transactions, setTransactions] = useState([]);
   const [form, setForm] = useState(emptyForm);
@@ -24,6 +25,10 @@ export default function FinancialAccountDetail() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+  const isEditMode = searchParams.get('mode') === 'edit';
+  const contentCardClass = isEditMode
+    ? 'rounded-3xl border-2 border-amber-300 bg-amber-50/40 p-6 shadow-sm'
+    : 'rounded-3xl border border-slate-200 bg-brand-card p-6 shadow-sm';
 
   const loadAccount = async () => {
     if (!supabase || !accountId) return;
@@ -178,8 +183,8 @@ export default function FinancialAccountDetail() {
       )}
 
       <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
-        <div className="rounded-3xl border border-slate-200 bg-brand-card p-6 shadow-sm">
-          <div className="mb-6 flex items-center justify-between">
+        <div className={contentCardClass}>
+          <div className="mb-4 flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
               <div className="rounded-2xl bg-[#fffaf0] p-3">
                 <Wallet className="h-5 w-5 text-[#c9a84c]" />
@@ -192,15 +197,29 @@ export default function FinancialAccountDetail() {
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={handleDelete}
-              className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700"
-            >
-              <Trash2 size={15} />
-              Delete
-            </button>
+            <div className="flex items-center gap-2">
+              {isEditMode && (
+                <span className="inline-flex items-center rounded-full border border-amber-300 bg-amber-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-amber-800">
+                  Edit Mode
+                </span>
+              )}
+
+              <button
+                type="button"
+                onClick={handleDelete}
+                className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700"
+              >
+                <Trash2 size={15} />
+                Delete
+              </button>
+            </div>
           </div>
+
+          {isEditMode && (
+            <div className="mb-5 rounded-xl border border-amber-200 bg-amber-100/70 px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-amber-800">
+              Editing financial account details
+            </div>
+          )}
 
           <form onSubmit={handleSave} className="space-y-5">
             <div className="grid gap-5 md:grid-cols-2">

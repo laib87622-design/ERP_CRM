@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BriefcaseBusiness, Pencil, Plus, Search, Trash2, UserPlus, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { calculateCommissionAmount, fetchAgencySettings, getCommissionRuleForType, slugifyCommissionTypeKey } from '../lib/agencySettings';
+import { calculateCommissionAmount, defaultAgencySettings, fetchAgencySettings, getCommissionRuleForType, slugifyCommissionTypeKey } from '../lib/agencySettings';
 import { ensureClientService } from '../lib/serviceWorkflow';
 import CancelBookingModal from '../components/CancelBookingModal';
+import SecureDeleteModal from '../components/ui/SecureDeleteModal';
 
 const emptyBookingForm = {
   client_id: '',
@@ -315,6 +316,7 @@ export default function Bookings({ language = 'en', onNotification }) {
   const [isServiceTypePickerOpen, setIsServiceTypePickerOpen] = useState(false);
   const [packageSearch, setPackageSearch] = useState('');
   const [isPackagePickerOpen, setIsPackagePickerOpen] = useState(false);
+  const [agencySettings, setAgencySettings] = useState(defaultAgencySettings);
   const [selectedCoClients, setSelectedCoClients] = useState([]);
   const [selectedTravelers, setSelectedTravelers] = useState([]);
   const [showOverdueOnly, setShowOverdueOnly] = useState(false);
@@ -324,6 +326,7 @@ export default function Bookings({ language = 'en', onNotification }) {
   const [endDate, setEndDate] = useState('');
   const [serviceTypeFilter, setServiceTypeFilter] = useState('all');
   const [cancelBookingTarget, setCancelBookingTarget] = useState(null);
+  const [deleteBookingTarget, setDeleteBookingTarget] = useState(null);
   const [quickCreateType, setQuickCreateType] = useState(null);
   const [quickCreateCustomType, setQuickCreateCustomType] = useState('');
   const [quickCreateForm, setQuickCreateForm] = useState({
@@ -423,7 +426,7 @@ export default function Bookings({ language = 'en', onNotification }) {
           return;
         }
 
-        const [clientsRes, packagesRes, packageTemplatesRes, servicesRes, suppliersRes, serviceTypesRes, bookingsRes] = await Promise.all([
+        const [clientsRes, packagesRes, packageTemplatesRes, servicesRes, suppliersRes, serviceTypesRes, bookingsRes, agencySettingsRes] = await Promise.all([
           supabase.from('clients').select('id, full_name, phone, email, companions').order('full_name', { ascending: true }),
           supabase.from('packages').select('id, title, destination, price, cost_price, pricing_mode, supplier_id').order('title', { ascending: true }),
           supabase
@@ -442,6 +445,7 @@ export default function Bookings({ language = 'en', onNotification }) {
               '*, clients(full_name, reference), booking_service_lines(supplier_id, service_type_id, suppliers(name), service_types(name))'
             )
             .order('id', { ascending: false }),
+          fetchAgencySettings(),
         ]);
 
         if (clientsRes.error) throw clientsRes.error;
@@ -463,6 +467,7 @@ export default function Bookings({ language = 'en', onNotification }) {
           }))
         );
         setBookings(bookingsRes.data || []);
+        setAgencySettings(agencySettingsRes || defaultAgencySettings);
       } catch (err) {
         setError(err.message || 'Unable to load bookings data.');
       } finally {
@@ -557,6 +562,8 @@ export default function Bookings({ language = 'en', onNotification }) {
       profit: sellingPrice - costPrice,
     };
   }, [serviceTypeLines, packageLines]);
+
+  const packageLinesEnabled = agencySettings.enable_package_lines !== false;
 
   const selectedCoClientIds = selectedCoClients;
 
@@ -1504,10 +1511,6 @@ export default function Bookings({ language = 'en', onNotification }) {
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this booking?')) {
-      return;
-    }
-
     try {
       if (!supabase) {
         setError('Supabase is not configured yet.');
@@ -1521,6 +1524,8 @@ export default function Bookings({ language = 'en', onNotification }) {
       await fetchBookings();
     } catch (err) {
       setError(err.message || 'Unable to delete booking.');
+    } finally {
+      setDeleteBookingTarget(null);
     }
   };
 
@@ -1912,7 +1917,7 @@ export default function Bookings({ language = 'en', onNotification }) {
                           type="button"
                           onClick={(event) => {
                             event.stopPropagation();
-                            handleDelete(booking.id);
+                            setDeleteBookingTarget(booking.id);
                           }}
                           className="rounded-lg bg-red-50 p-2 text-red-600 transition hover:bg-red-100"
                           aria-label={`Delete booking ${booking.id}`}
@@ -1928,6 +1933,15 @@ export default function Bookings({ language = 'en', onNotification }) {
           </table>
         </div>
       </div>
+
+      {deleteBookingTarget && (
+        <SecureDeleteModal
+          isOpen={Boolean(deleteBookingTarget)}
+          onClose={() => setDeleteBookingTarget(null)}
+          onConfirm={() => handleDelete(deleteBookingTarget)}
+          title="Delete Booking"
+        />
+      )}
 
       {cancelBookingTarget && (
         <CancelBookingModal
@@ -2270,144 +2284,146 @@ export default function Bookings({ language = 'en', onNotification }) {
                 </div>
               </div>
 
-              <div>
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <label className="block text-sm font-medium text-brand-navy">Package Lines</label>
-                  <button
-                    type="button"
-                    onClick={() => setIsPackagePickerOpen((prev) => !prev)}
-                    className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-brand-surface px-2.5 py-1.5 text-xs font-semibold text-brand-navy"
-                  >
-                    <Plus size={14} />
-                    Add Package
-                  </button>
-                </div>
-
-                {isPackagePickerOpen && (
-                  <div className="mb-3 rounded-2xl border border-slate-200 bg-brand-surface p-3">
-                    <div className="mb-2 flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
-                      <Search size={14} className="text-slate-400" />
-                      <input
-                        autoFocus
-                        value={packageSearch}
-                        onChange={(event) => setPackageSearch(event.target.value)}
-                        placeholder="Search package templates..."
-                        className="w-full bg-transparent text-sm text-brand-navy outline-none"
-                      />
-                    </div>
-
-                    <div className="max-h-48 space-y-1 overflow-y-auto">
-                      {packageTemplates
-                        .filter((template) => {
-                          const query = packageSearch.trim().toLowerCase();
-                          if (!query) return true;
-                          return `${template.label || ''} ${template.destination || ''} ${template.type || ''}`
-                            .toLowerCase()
-                            .includes(query);
-                        })
-                        .map((template) => (
-                          <button
-                            key={template.id}
-                            type="button"
-                            onClick={() => addPackageLine(template.id)}
-                            className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm text-brand-navy transition hover:bg-slate-100"
-                          >
-                            <div>
-                              <div className="font-medium">{template.label || 'Untitled package'}</div>
-                              <div className="text-xs text-slate-500">{template.destination || 'No destination'}</div>
-                            </div>
-                            <span className="rounded-full bg-amber-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-800">
-                              {template.type || template.template_type || 'trip'}
-                            </span>
-                          </button>
-                        ))}
-                      {packageTemplates.length === 0 && (
-                        <p className="px-3 py-2 text-sm text-slate-500">No package templates yet. Create one in the Packages page.</p>
-                      )}
-                    </div>
+              {packageLinesEnabled && (
+                <div>
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <label className="block text-sm font-medium text-brand-navy">Package Lines</label>
+                    <button
+                      type="button"
+                      onClick={() => setIsPackagePickerOpen((prev) => !prev)}
+                      className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-brand-surface px-2.5 py-1.5 text-xs font-semibold text-brand-navy"
+                    >
+                      <Plus size={14} />
+                      Add Package
+                    </button>
                   </div>
-                )}
 
-                <div className="space-y-3">
-                  {packageLines.length === 0 ? (
-                    <p className="rounded-xl border border-dashed border-slate-200 bg-brand-surface px-3 py-3 text-sm text-slate-500">
-                      No package lines added yet.
-                    </p>
-                  ) : (
-                    packageLines.map((line) => (
-                      <div key={line.lineId} className="rounded-2xl border border-slate-200 bg-brand-surface p-3">
-                        <div className="mb-2 flex items-center justify-between gap-2">
-                          <span className="text-sm font-semibold text-brand-navy">{line.package_label || 'Package'}</span>
-                          <button
-                            type="button"
-                            onClick={() => removePackageLine(line.lineId)}
-                            className="rounded-lg border border-red-200 bg-red-50 p-1.5 text-red-600"
-                            aria-label="Remove package line"
-                          >
-                            <X size={14} />
-                          </button>
-                        </div>
-
-                        <div className="grid gap-2 md:grid-cols-5">
-                          <select
-                            value={line.package_id || ''}
-                            onChange={(event) => updatePackageLine(line.lineId, 'package_id', event.target.value)}
-                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-brand-navy outline-none focus:border-brand-gold"
-                          >
-                            <option value="">Select package</option>
-                            {packageTemplates.map((template) => (
-                              <option key={template.id} value={template.id}>
-                                {template.label || 'Untitled package'}
-                              </option>
-                            ))}
-                          </select>
-
-                          <select
-                            value={line.supplier_id}
-                            onChange={(event) => updatePackageLine(line.lineId, 'supplier_id', event.target.value)}
-                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-brand-navy outline-none focus:border-brand-gold"
-                          >
-                            <option value="">Select supplier</option>
-                            {suppliers.map((supplier) => (
-                              <option key={supplier.id} value={supplier.id}>{supplier.name}</option>
-                            ))}
-                          </select>
-
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={line.cost_price}
-                            onChange={(event) => updatePackageLine(line.lineId, 'cost_price', event.target.value)}
-                            placeholder="Cost price (DZD)"
-                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-brand-navy outline-none focus:border-brand-gold"
-                          />
-
-                          <input
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            value={line.selling_price}
-                            onChange={(event) => updatePackageLine(line.lineId, 'selling_price', event.target.value)}
-                            placeholder="Selling price (DZD)"
-                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-brand-navy outline-none focus:border-brand-gold"
-                          />
-
-                          <select
-                            value={Number(line.tva_rate || 0)}
-                            onChange={(event) => updatePackageLine(line.lineId, 'tva_rate', Number(event.target.value || 0))}
-                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-brand-navy outline-none focus:border-brand-gold"
-                          >
-                            <option value={0}>No TVA (0%)</option>
-                            <option value={9}>9%</option>
-                            <option value={19}>19%</option>
-                          </select>
-                        </div>
+                  {isPackagePickerOpen && (
+                    <div className="mb-3 rounded-2xl border border-slate-200 bg-brand-surface p-3">
+                      <div className="mb-2 flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
+                        <Search size={14} className="text-slate-400" />
+                        <input
+                          autoFocus
+                          value={packageSearch}
+                          onChange={(event) => setPackageSearch(event.target.value)}
+                          placeholder="Search package templates..."
+                          className="w-full bg-transparent text-sm text-brand-navy outline-none"
+                        />
                       </div>
-                    ))
+
+                      <div className="max-h-48 space-y-1 overflow-y-auto">
+                        {packageTemplates
+                          .filter((template) => {
+                            const query = packageSearch.trim().toLowerCase();
+                            if (!query) return true;
+                            return `${template.label || ''} ${template.destination || ''} ${template.type || ''}`
+                              .toLowerCase()
+                              .includes(query);
+                          })
+                          .map((template) => (
+                            <button
+                              key={template.id}
+                              type="button"
+                              onClick={() => addPackageLine(template.id)}
+                              className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm text-brand-navy transition hover:bg-slate-100"
+                            >
+                              <div>
+                                <div className="font-medium">{template.label || 'Untitled package'}</div>
+                                <div className="text-xs text-slate-500">{template.destination || 'No destination'}</div>
+                              </div>
+                              <span className="rounded-full bg-amber-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-800">
+                                {template.type || template.template_type || 'trip'}
+                              </span>
+                            </button>
+                          ))}
+                        {packageTemplates.length === 0 && (
+                          <p className="px-3 py-2 text-sm text-slate-500">No package templates yet. Create one in the Packages page.</p>
+                        )}
+                      </div>
+                    </div>
                   )}
+
+                  <div className="space-y-3">
+                    {packageLines.length === 0 ? (
+                      <p className="rounded-xl border border-dashed border-slate-200 bg-brand-surface px-3 py-3 text-sm text-slate-500">
+                        No package lines added yet.
+                      </p>
+                    ) : (
+                      packageLines.map((line) => (
+                        <div key={line.lineId} className="rounded-2xl border border-slate-200 bg-brand-surface p-3">
+                          <div className="mb-2 flex items-center justify-between gap-2">
+                            <span className="text-sm font-semibold text-brand-navy">{line.package_label || 'Package'}</span>
+                            <button
+                              type="button"
+                              onClick={() => removePackageLine(line.lineId)}
+                              className="rounded-lg border border-red-200 bg-red-50 p-1.5 text-red-600"
+                              aria-label="Remove package line"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+
+                          <div className="grid gap-2 md:grid-cols-5">
+                            <select
+                              value={line.package_id || ''}
+                              onChange={(event) => updatePackageLine(line.lineId, 'package_id', event.target.value)}
+                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-brand-navy outline-none focus:border-brand-gold"
+                            >
+                              <option value="">Select package</option>
+                              {packageTemplates.map((template) => (
+                                <option key={template.id} value={template.id}>
+                                  {template.label || 'Untitled package'}
+                                </option>
+                              ))}
+                            </select>
+
+                            <select
+                              value={line.supplier_id}
+                              onChange={(event) => updatePackageLine(line.lineId, 'supplier_id', event.target.value)}
+                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-brand-navy outline-none focus:border-brand-gold"
+                            >
+                              <option value="">Select supplier</option>
+                              {suppliers.map((supplier) => (
+                                <option key={supplier.id} value={supplier.id}>{supplier.name}</option>
+                              ))}
+                            </select>
+
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={line.cost_price}
+                              onChange={(event) => updatePackageLine(line.lineId, 'cost_price', event.target.value)}
+                              placeholder="Cost price (DZD)"
+                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-brand-navy outline-none focus:border-brand-gold"
+                            />
+
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              value={line.selling_price}
+                              onChange={(event) => updatePackageLine(line.lineId, 'selling_price', event.target.value)}
+                              placeholder="Selling price (DZD)"
+                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-brand-navy outline-none focus:border-brand-gold"
+                            />
+
+                            <select
+                              value={Number(line.tva_rate || 0)}
+                              onChange={(event) => updatePackageLine(line.lineId, 'tva_rate', Number(event.target.value || 0))}
+                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-brand-navy outline-none focus:border-brand-gold"
+                            >
+                              <option value={0}>No TVA (0%)</option>
+                              <option value={9}>9%</option>
+                              <option value={19}>19%</option>
+                            </select>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div className="grid gap-4 md:grid-cols-2">
                 <div>
@@ -2417,7 +2433,7 @@ export default function Bookings({ language = 'en', onNotification }) {
                     value={form.reference}
                     onChange={(event) => handleFieldChange('reference', event.target.value)}
                     className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 text-brand-navy outline-none focus:border-brand-gold"
-                    placeholder="Booking reference"
+                    placeholder="Flight, visa, or contract ref"
                   />
                 </div>
 
@@ -2436,27 +2452,14 @@ export default function Bookings({ language = 'en', onNotification }) {
                 </div>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-brand-navy">Finish date</label>
-                  <input
-                    type="date"
-                    value={form.finish_date}
-                    onChange={(event) => handleFieldChange('finish_date', event.target.value)}
-                    className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 text-brand-navy outline-none focus:border-brand-gold"
-                  />
-                </div>
-
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-brand-navy">Reference / note</label>
-                  <input
-                    type="text"
-                    value={form.reference}
-                    onChange={(event) => handleFieldChange('reference', event.target.value)}
-                    className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 text-brand-navy outline-none focus:border-brand-gold"
-                    placeholder="Flight, visa, or contract ref"
-                  />
-                </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-brand-navy">Finish date</label>
+                <input
+                  type="date"
+                  value={form.finish_date}
+                  onChange={(event) => handleFieldChange('finish_date', event.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 text-brand-navy outline-none focus:border-brand-gold"
+                />
               </div>
 
               <div>

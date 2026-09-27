@@ -4,6 +4,7 @@ import { Wallet, CreditCard, Smartphone, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/currency';
 import BankingFilterBar from '../components/ui/BankingFilterBar';
+import SecureDeleteModal from '../components/ui/SecureDeleteModal';
 
 const translations = {
   en: {
@@ -72,6 +73,7 @@ const Bank = ({ language = 'en', role: initialRole = 'viewer' }) => {
   const [settleSupplier, setSettleSupplier] = useState(null);
   const [settleForm, setSettleForm] = useState({ amount: '', note: '', selected_account_id: '' });
   const [settleSaving, setSettleSaving] = useState(false);
+  const [deleteAccountTarget, setDeleteAccountTarget] = useState(null);
 
   const canView = role === 'super_admin' || role === 'cashier' || role === 'sales_agent';
   const canWrite = role === 'super_admin' || role === 'cashier';
@@ -298,8 +300,14 @@ const Bank = ({ language = 'en', role: initialRole = 'viewer' }) => {
     }
   };
 
+  const handleOpenAccountDetail = (accountId, mode = 'view') => {
+    if (!accountId) return;
+    const query = mode === 'edit' ? '?mode=edit' : '';
+    navigate(`/bank/accounts/${accountId}${query}`);
+  };
+
   const handleDeleteFinancialAccount = async (accountId) => {
-    if (!supabase || !window.confirm('Delete this financial account? This action cannot be undone.')) {
+    if (!supabase) {
       return;
     }
 
@@ -310,6 +318,8 @@ const Bank = ({ language = 'en', role: initialRole = 'viewer' }) => {
       await loadBankData();
     } catch (err) {
       setError(err.message || 'Unable to delete financial account.');
+    } finally {
+      setDeleteAccountTarget(null);
     }
   };
 
@@ -334,6 +344,15 @@ const Bank = ({ language = 'en', role: initialRole = 'viewer' }) => {
 
       {error && (
         <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
+      )}
+
+      {deleteAccountTarget && (
+        <SecureDeleteModal
+          isOpen={Boolean(deleteAccountTarget)}
+          onClose={() => setDeleteAccountTarget(null)}
+          onConfirm={() => handleDeleteFinancialAccount(deleteAccountTarget)}
+          title="Delete Bank Account"
+        />
       )}
 
       {loading ? (
@@ -395,21 +414,21 @@ const Bank = ({ language = 'en', role: initialRole = 'viewer' }) => {
                   <div className="mt-5 flex flex-wrap gap-2">
                     <button
                       type="button"
-                      onClick={() => navigate(`/bank/accounts/${account.id}`)}
+                      onClick={() => handleOpenAccountDetail(account.id, 'view')}
                       className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-brand-navy"
                     >
                       {t.view}
                     </button>
                     <button
                       type="button"
-                      onClick={() => navigate(`/bank/accounts/${account.id}`)}
+                      onClick={() => handleOpenAccountDetail(account.id, 'edit')}
                       className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-xs font-semibold text-amber-700"
                     >
                       {t.edit}
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleDeleteFinancialAccount(account.id)}
+                      onClick={() => setDeleteAccountTarget(account.id)}
                       className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-semibold text-red-700"
                     >
                       {t.delete}

@@ -21,6 +21,9 @@ export default function InternalTransfer() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
+  const sourceAccount = accounts.find((account) => account.id === form.source_account_id);
+  const targetAccount = accounts.find((account) => account.id === form.target_account_id);
+
   useEffect(() => {
     const fetchAccounts = async () => {
       if (!supabase) {
