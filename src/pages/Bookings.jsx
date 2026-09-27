@@ -354,9 +354,9 @@ export default function Bookings({ language = 'en', onNotification }) {
     []
   );
 
-  const notify = (title, message, type = 'info') => {
+  const notify = (title, message, type = 'info', route = null) => {
     if (onNotification) {
-      onNotification({ title, message, type });
+      onNotification({ title, message, type, route });
     }
   };
 
@@ -1436,10 +1436,11 @@ export default function Bookings({ language = 'en', onNotification }) {
         notify(
           'Booking saved',
           `Invoice is pending and the client service is ready to be worked. Due date: ${new Date(`${payload.finish_date}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}.`,
-          'success'
+          'success',
+          '/bookings'
         );
       } else {
-        notify('Booking saved', 'Invoice is pending. Please assign a finish date for full tracking.', 'warning');
+        notify('Booking saved', 'Invoice is pending. Please assign a finish date for full tracking.', 'warning', '/bookings');
       }
     } catch (err) {
       setError(err.message || 'Unable to save booking.');
@@ -1512,7 +1513,8 @@ export default function Bookings({ language = 'en', onNotification }) {
           missingInfo
             ? `Client created. Please complete the missing client info: ${missingInfo}.`
             : 'Client created successfully. The booking can continue with the new profile.',
-          missingInfo ? 'warning' : 'success'
+          missingInfo ? 'warning' : 'success',
+          '/clients'
         );
       }
 
@@ -1548,7 +1550,8 @@ export default function Bookings({ language = 'en', onNotification }) {
           missingInfo
             ? `Supplier created. Please complete the missing supplier info: ${missingInfo}.`
             : 'Supplier created successfully. Supplier debt and payment tracking are now active.',
-          missingInfo ? 'warning' : 'success'
+          missingInfo ? 'warning' : 'success',
+          '/suppliers'
         );
       }
 
@@ -1583,7 +1586,8 @@ export default function Bookings({ language = 'en', onNotification }) {
           missingInfo
             ? `Package created. Please complete the missing package info: ${missingInfo}.`
             : 'Package created successfully. The booking can now continue without missing fields.',
-          missingInfo ? 'warning' : 'success'
+          missingInfo ? 'warning' : 'success',
+          '/packages'
         );
       }
 

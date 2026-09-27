@@ -116,7 +116,7 @@ export default function ClientDetail() {
         supabase.from('clients').select('*, reference').eq('id', clientId).maybeSingle(),
         supabase
           .from('bookings')
-          .select('id, client_id, reference, status, selling_price, finish_date, created_at, package_id, service_id, service_types, package_lines, booking_service_lines(id, service_type_id, details)')
+          .select('id, client_id, reference, status, selling_price, finish_date, created_at, package_id, service_id, package_lines, booking_service_lines(id, service_type_id, details, service_types(name))')
           .eq('client_id', clientId)
           .order('created_at', { ascending: false }),
         supabase
@@ -183,9 +183,10 @@ export default function ClientDetail() {
         packageTitle: packageMap[booking.package_id]?.title || '—',
         serviceTitle: serviceTemplateMap[booking.service_id]?.title || '—',
         bookingReference: bookingReferenceMap[booking.id]?.reference || null,
+        serviceTypeNames: [...new Set((booking.booking_service_lines || []).map((line) => line.service_types?.name || serviceTypeMap[line.service_type_id]).filter(Boolean))],
         detailRows: (booking.booking_service_lines || []).map((line) => ({
           id: line.id,
-          serviceTypeName: serviceTypeMap[line.service_type_id] || 'Service line',
+          serviceTypeName: line.service_types?.name || serviceTypeMap[line.service_type_id] || 'Service line',
           fields: Object.entries(typeof line.details === 'object' && line.details ? line.details : {}).map(([key, value]) => ({
             key,
             value,
@@ -429,15 +430,11 @@ export default function ClientDetail() {
                         <td className="px-4 py-3 font-medium text-brand-navy">{booking.reference || `#${booking.id.slice(0, 6)}`}</td>
                         <td className="px-4 py-3 text-sm text-slate-800">
                           {(() => {
+                            if ((booking.serviceTypeNames || []).length > 0) {
+                              return booking.serviceTypeNames.join(', ');
+                            }
+
                             try {
-                              const services = typeof booking.service_types === 'string'
-                                ? JSON.parse(booking.service_types)
-                                : (booking.service_types || []);
-
-                              if (services.length > 0) {
-                                return services.map((service) => service.type || service.name || 'Service').join(', ');
-                              }
-
                               const packages = typeof booking.package_lines === 'string'
                                 ? JSON.parse(booking.package_lines)
                                 : (booking.package_lines || []);

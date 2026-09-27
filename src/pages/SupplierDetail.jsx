@@ -133,7 +133,7 @@ function SupplierDetailInner() {
 
       const bookingLinesResult = await supabase
         .from('booking_service_lines')
-        .select('booking_id, bookings(id, reference, status, created_at, service_types, package_lines, clients(full_name))')
+        .select('booking_id, bookings(id, reference, status, created_at, package_lines, clients(full_name), booking_service_lines(id, service_type_id, service_types(name)))')
         .eq('supplier_id', supplierId);
 
       if (bookingLinesResult.error && /booking_service_lines|does not exist|relation .* does not exist/i.test(bookingLinesResult.error.message || '')) {
@@ -147,13 +147,15 @@ function SupplierDetailInner() {
         const booking = row.bookings;
         if (!booking || !booking.id) return;
 
+        const serviceTypeNames = [...new Set((booking.booking_service_lines || []).map((line) => line.service_types?.name || line.service_type_id).filter(Boolean))];
+
         bookingsById.set(booking.id, {
           id: booking.id,
           client_id: booking.client_id || null,
           reference: booking.reference || `#${String(booking.id).slice(0, 6)}`,
           status: booking.status || 'pending',
           created_at: booking.created_at,
-          service_types: booking.service_types || [],
+          service_type_names: serviceTypeNames,
           package_lines: booking.package_lines || [],
           clients: booking.clients || null,
           client_name: booking.clients?.full_name || 'Unknown Client',
@@ -396,15 +398,11 @@ function SupplierDetailInner() {
                         <td className="px-4 py-3 font-medium text-brand-navy">{booking.clients?.full_name || 'Unknown Client'}</td>
                         <td className="px-4 py-3 text-sm text-slate-800">
                           {(() => {
+                            if ((booking.service_type_names || []).length > 0) {
+                              return booking.service_type_names.join(', ');
+                            }
+
                             try {
-                              const services = typeof booking.service_types === 'string'
-                                ? JSON.parse(booking.service_types)
-                                : (booking.service_types || []);
-
-                              if (services.length > 0) {
-                                return services.map((service) => service.type || service.name || 'Service').join(', ');
-                              }
-
                               const packages = typeof booking.package_lines === 'string'
                                 ? JSON.parse(booking.package_lines)
                                 : (booking.package_lines || []);

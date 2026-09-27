@@ -166,16 +166,34 @@ function App() {
       .eq('user_id', session.user.id);
   };
 
+  const resolveNotificationRoute = (notification = {}) => {
+    if (notification.route) return notification.route;
+
+    const text = `${notification.title || ''} ${notification.message || ''}`.toLowerCase();
+    if (/booking/.test(text)) return '/bookings';
+    if (/invoice/.test(text)) return '/invoices';
+    if (/client/.test(text)) return '/clients';
+    if (/supplier/.test(text)) return '/suppliers';
+    if (/bank|payment|cash|ledger/.test(text)) return '/bank';
+    if (/service|visa|workflow/.test(text)) return '/services';
+    if (/commission/.test(text)) return '/settings/commission';
+    if (/team|employee|role/.test(text)) return '/role-dashboard';
+
+    return '/';
+  };
+
   const addNotification = async (notification) => {
     const channel = notification.channel || 'push';
     const title = notification.title || 'System update';
     const message = notification.message || 'An update is available.';
+    const route = notification.route || resolveNotificationRoute(notification);
     const nextNotification = {
       id: notification.id || `${Date.now()}-${Math.random()}`,
       user_id: session?.user?.id || null,
       title,
       message,
       channel,
+      route,
       is_read: false,
       created_at: new Date().toISOString(),
       read_at: null,
@@ -192,6 +210,7 @@ function App() {
             title,
             message,
             channel,
+            route,
             type: notification.type || 'info',
             is_read: false,
           },
@@ -213,22 +232,67 @@ function App() {
     }
   };
 
+  const handleNotificationClick = async (item) => {
+    if (item?.route) {
+      await markNotificationRead(item.id);
+      setShowNotificationCenter(false);
+      window.location.assign(item.route);
+      return;
+    }
+
+    await markNotificationRead(item.id);
+    setShowNotificationCenter(false);
+  };
+
+  const localizeNotification = (item) => {
+    if (!item) return item;
+
+    const titleKey = String(item.title || '').trim().toLowerCase();
+    const titleMap = {
+      'booking saved': language === 'ar' ? 'تم حفظ الحجز' : 'Booking saved',
+      'client created': language === 'ar' ? 'تم إنشاء العميل' : 'Client created',
+      'supplier created': language === 'ar' ? 'تم إنشاء المورد' : 'Supplier created',
+      'package created': language === 'ar' ? 'تم إنشاء الباقة' : 'Package created',
+    };
+
+    const messageMap = {
+      'booking saved': language === 'ar' ? 'تم حفظ الحجز بنجاح.' : 'Booking saved successfully.',
+      'client created': language === 'ar' ? 'تم إنشاء العميل بنجاح.' : 'Client created successfully.',
+      'supplier created': language === 'ar' ? 'تم إنشاء المورد بنجاح.' : 'Supplier created successfully.',
+      'package created': language === 'ar' ? 'تم إنشاء الباقة بنجاح.' : 'Package created successfully.',
+    };
+
+    return {
+      ...item,
+      title: titleMap[titleKey] || item.title || (language === 'ar' ? 'تحديث النظام' : 'System update'),
+      message: messageMap[titleKey] || item.message || (language === 'ar' ? 'تحديث متاح.' : 'An update is available.'),
+    };
+  };
+
   useEffect(() => {
     if (!supabase) {
       setAuthReady(true);
       return;
     }
 
-    const getSession = async () => {
+    const initializeSession = async () => {
       const { data } = await supabase.auth.getSession();
-      setSession(data.session);
+      setSession(data.session || null);
       setAuthReady(true);
     };
 
-    getSession();
+    initializeSession();
 
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, newSession) => {
-      setSession(newSession);
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, newSession) => {
+      if (event === 'TOKEN_REFRESHED') {
+        console.log('Token refreshed successfully');
+      }
+
+      if (event === 'SIGNED_OUT') {
+        setSession(null);
+      }
+
+      setSession(newSession || null);
     });
 
     return () => authListener.subscription.unsubscribe();
@@ -357,28 +421,28 @@ function App() {
                           {language === 'en' ? 'No notifications yet.' : 'لا توجد إشعارات حتى الآن.'}
                         </div>
                       ) : (
-                        filteredNotifications.map((item) => (
-                          <div
-                            key={item.id}
-                            className={`rounded-xl border p-3 text-left transition ${
-                              item.is_read ? 'border-slate-200 bg-brand-surface' : 'border-brand-gold/40 bg-amber-50'
-                            }`}
-                          >
+                        filteredNotifications.map((item) => {
+                          const localizedItem = localizeNotification(item);
+
+                          return (
                             <button
+                              key={item.id}
                               type="button"
-                              onClick={() => markNotificationRead(item.id)}
-                              className="block w-full text-left"
+                              onClick={() => handleNotificationClick(item)}
+                              className={`block w-full rounded-xl border p-3 text-left transition ${
+                                item.is_read ? 'border-slate-200 bg-brand-surface' : 'border-brand-gold/40 bg-amber-50'
+                              }`}
                             >
                               <div className="mb-2 flex items-center justify-between gap-3">
-                                <p className="text-xs font-bold uppercase tracking-[0.14em] text-brand-gold">{item.title}</p>
+                                <p className="text-xs font-bold uppercase tracking-[0.14em] text-brand-gold">{localizedItem.title}</p>
                                 <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${notificationChannels[item.channel || 'system']?.tone || 'bg-slate-100 text-slate-700'}`}>
-                                  {notificationChannels[item.channel || 'system']?.label || 'System'}
+                                  {notificationChannels[item.channel || 'system']?.label || (language === 'en' ? 'System' : 'النظام')}
                                 </span>
                               </div>
-                              <p className="text-sm leading-6 text-slate-700">{item.message}</p>
+                              <p className="text-sm leading-6 text-slate-700">{localizedItem.message}</p>
                               <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-400">
                                 <span>
-                                  {new Date(item.created_at || item.createdAt).toLocaleString('en-GB', {
+                                  {new Date(item.created_at || item.createdAt).toLocaleString(language === 'ar' ? 'ar-DZ' : 'en-GB', {
                                     dateStyle: 'short',
                                     timeStyle: 'short',
                                   })}
@@ -390,21 +454,8 @@ function App() {
                                 )}
                               </div>
                             </button>
-
-                            <div className="mt-3 flex justify-end">
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  deleteNotification(item.id);
-                                }}
-                                className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-semibold text-red-600"
-                              >
-                                {language === 'en' ? 'Delete' : 'حذف'}
-                              </button>
-                            </div>
-                          </div>
-                        ))
+                          );
+                        })
                       )}
                     </div>
                   </div>
