@@ -1,3 +1,5 @@
+import { supabase } from './supabase';
+
 export const notificationChannels = {
   system: { label: 'System', tone: 'bg-slate-200 text-slate-700' },
   email: { label: 'Email', tone: 'bg-blue-100 text-blue-700' },
@@ -5,29 +7,65 @@ export const notificationChannels = {
   push: { label: 'Push', tone: 'bg-emerald-100 text-emerald-700' },
 };
 
-export const deliverPushNotification = async ({ channel = 'system', title, message }) => {
+export const fetchNotificationsForUser = async (userId) => {
+  if (!supabase || !userId) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from('notifications')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('Failed to fetch notifications from Supabase:', error);
+    return [];
+  }
+
+  return data || [];
+};
+
+export const deliverPushNotification = async ({
+  channel = 'system',
+  title,
+  message,
+  userId = null,
+  route = null,
+  type = 'info',
+}) => {
   const payload = {
     channel,
     title,
     message,
+    type,
+    route,
     sentAt: new Date().toISOString(),
   };
 
-  try {
-    if (typeof window !== 'undefined' && typeof window.fetch === 'function') {
-      const response = await fetch('/api/notifications', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (response.ok) {
-        return { ...payload, delivered: true, backend: 'api' };
-      }
-    }
-  } catch (error) {
-    // Fallback to local app delivery when no backend endpoint exists.
+  if (!supabase || !userId) {
+    return { ...payload, delivered: true, backend: 'local' };
   }
 
-  return { ...payload, delivered: true, backend: 'local' };
+  try {
+    const { error } = await supabase.from('notifications').insert({
+      user_id: userId,
+      title,
+      message,
+      channel,
+      type,
+      route,
+      is_read: false,
+    });
+
+    if (!error) {
+      return { ...payload, delivered: true, backend: 'supabase' };
+    }
+
+    console.error('Failed to insert notification via Supabase:', error);
+    return { ...payload, delivered: false, backend: 'supabase', error };
+  } catch (error) {
+    console.error('Notification delivery failed:', error);
+    return { ...payload, delivered: false, backend: 'supabase', error };
+  }
 };

@@ -198,15 +198,11 @@ export async function calculateAndInsertCommission(bookingId, agentId) {
     return 0;
   }
 
-  const commissionRules = settingsData[0].commission_rules || {};
+  const commissionRules = settingsData[0].commission_rules;
 
   const { data: serviceLines, error: linesError } = await supabase
     .from('booking_service_lines')
-    .select(`
-      selling_price,
-      cost_price,
-      service_types (name)
-    `)
+    .select(`selling_price, cost_price, service_types(name)`)
     .eq('booking_id', bookingId);
 
   if (linesError || !serviceLines) {
@@ -215,14 +211,12 @@ export async function calculateAndInsertCommission(bookingId, agentId) {
   }
 
   let totalCommission = 0;
-
-  console.log('Starting calculation for booking service lines:', serviceLines);
+  console.log('Starting commission calculation for lines:', serviceLines);
 
   serviceLines.forEach((line) => {
-    const name = line?.service_types?.name;
-
+    const name = line.service_types?.name;
     if (!name) {
-      console.warn('Service line has no matching service type name, skipping:', line);
+      console.warn('Service line missing name, skipping:', line);
       return;
     }
 
@@ -233,48 +227,37 @@ export async function calculateAndInsertCommission(bookingId, agentId) {
 
     if (rule && rule.enabled) {
       if (rule.method === 'percentage') {
-        const profit = Number(line.selling_price || 0) - Number(line.cost_price || 0);
-        const cut = profit * (Number(rule.percentage || 0) / 100);
+        const profit = (line.selling_price || 0) - (line.cost_price || 0);
+        const cut = profit * (rule.percentage / 100);
         console.log(`Percentage match: Profit ${profit} * ${rule.percentage}% = ${cut}`);
         totalCommission += cut;
       } else if (rule.method === 'amount') {
-        const cut = Number(rule.amount || 0);
-        console.log(`Fixed amount match: ${cut}`);
-        totalCommission += cut;
+        console.log(`Fixed amount match: ${rule.amount}`);
+        totalCommission += Number(rule.amount);
       }
     } else {
       console.warn(`No active rule found for key: ${ruleKey}`);
     }
   });
 
-  totalCommission = Number(totalCommission.toFixed(2));
   console.log('Final Total Commission Calculated:', totalCommission);
 
-  if (totalCommission <= 0) {
-    return 0;
+  if (totalCommission > 0) {
+    const { error: insertError } = await supabase.from('agent_commissions').insert({
+      agent_id: agentId,
+      booking_id: bookingId,
+      amount: totalCommission,
+      status: 'PENDING_PAYMENT',
+    });
+
+    if (insertError) {
+      console.error('Failed to save commission:', insertError);
+    } else {
+      console.log('Commission saved successfully!');
+    }
   }
 
-  const { data: insertedRow, error: insertError } = await supabase
-    .from('agent_commissions')
-    .insert([
-      {
-        agent_id: agentId,
-        booking_id: bookingId,
-        invoice_id: null,
-        amount: totalCommission,
-        status: 'PENDING_PAYMENT',
-        notes: 'Auto-created from booking service lines',
-      },
-    ])
-    .select()
-    .single();
-
-  if (insertError) {
-    throw insertError;
-  }
-
-  console.log('Commission saved successfully');
-  return Number(insertedRow?.amount ?? totalCommission);
+  return totalCommission;
 }
 
 export const defaultAgencySettings = {
