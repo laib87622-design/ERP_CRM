@@ -154,22 +154,7 @@ export default function InvoiceDetail({ language = 'en' }) {
             .from('invoices')
             .select(`
               *,
-              clients(full_name, reference, phone, email),
-              bookings(
-                id,
-                reference,
-                booking_service_lines(
-                  id,
-                  description,
-                  quantity,
-                  unit_price,
-                  selling_price,
-                  cost_price,
-                  tva_rate,
-                  service_types(name, name_ar),
-                  suppliers(name)
-                )
-              )
+              clients(full_name, reference, phone, email)
             `)
             .eq('id', invoiceId)
             .maybeSingle(),
@@ -193,7 +178,33 @@ export default function InvoiceDetail({ language = 'en' }) {
         setFinancialAccounts(accountsData || []);
         setSelectedAccountId((prev) => prev || fallbackAccount?.id || '');
 
-        const bookingServiceLines = data?.bookings?.booking_service_lines || [];
+        let bookingData = null;
+        if (data?.booking_id) {
+          const { data: bookingRow, error: bookingError } = await supabase
+            .from('bookings')
+            .select(`
+              id,
+              reference,
+              booking_service_lines(
+                id,
+                description,
+                quantity,
+                unit_price,
+                selling_price,
+                cost_price,
+                tva_rate,
+                service_types(name, name_ar),
+                suppliers(name)
+              )
+            `)
+            .eq('id', data.booking_id)
+            .maybeSingle();
+
+          if (bookingError) throw bookingError;
+          bookingData = bookingRow;
+        }
+
+        const bookingServiceLines = bookingData?.booking_service_lines || [];
         const packageIds = [...new Set(bookingServiceLines
           .map((line) => {
             const details = (line.details && typeof line.details === 'object') ? line.details : {};

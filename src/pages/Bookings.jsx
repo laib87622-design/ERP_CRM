@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BriefcaseBusiness, Pencil, Plus, Search, Trash2, UserPlus, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { calculateCommissionAmount, fetchAgencySettings, getCommissionRuleForType, slugifyCommissionTypeKey } from '../lib/agencySettings';
 import { ensureClientService } from '../lib/serviceWorkflow';
 import CancelBookingModal from '../components/CancelBookingModal';
 
@@ -1175,6 +1176,57 @@ export default function Bookings({ language = 'en', onNotification }) {
     }
   };
 
+  const createCommissionEntriesForBooking = async (bookingRecord) => {
+    if (!supabase || !bookingRecord?.id || !bookingRecord?.agent_id) return;
+
+    try {
+      const settings = await fetchAgencySettings();
+      const { data: serviceLines, error: linesError } = await supabase
+        .from('booking_service_lines')
+        .select('id, booking_id, service_type_id, selling_price, cost_price, service_types(name)')
+        .eq('booking_id', bookingRecord.id);
+
+      if (linesError) throw linesError;
+
+      const rowsToInsert = (serviceLines || []).map((line) => {
+        const serviceTypeName = String(line?.service_types?.name || 'custom_service').trim();
+        const typeKey = slugifyCommissionTypeKey(serviceTypeName);
+        const rule = getCommissionRuleForType(typeKey, settings);
+        const profit = Math.max(Number(line?.selling_price || 0) - Number(line?.cost_price || 0), 0);
+        const amount = rule.enabled ? calculateCommissionAmount(typeKey, profit, settings) : 0;
+        return {
+          agent_id: bookingRecord.agent_id,
+          booking_id: bookingRecord.id,
+          invoice_id: null,
+          amount: Number(amount || 0),
+          status: 'PENDING_PAYMENT',
+          notes: `${serviceTypeName} commission pending payment`,
+        };
+      }).filter((row) => Number(row.amount || 0) > 0);
+
+      if (rowsToInsert.length === 0) return;
+
+      const { data: existingRows, error: existingError } = await supabase
+        .from('agent_commissions')
+        .select('id, booking_id, agent_id, invoice_id')
+        .eq('booking_id', bookingRecord.id);
+
+      if (existingError) throw existingError;
+
+      const existingKeys = new Set((existingRows || []).map((row) => `${row.booking_id}|${row.agent_id}|${row.invoice_id || 'none'}`));
+      const newRows = rowsToInsert.filter((row) => !existingKeys.has(`${row.booking_id}|${row.agent_id}|${row.invoice_id || 'none'}`));
+
+      if (newRows.length > 0) {
+        const { error: insertError } = await supabase.from('agent_commissions').insert(newRows);
+        if (insertError) {
+          console.warn('Unable to create commission rows for booking:', insertError.message || insertError);
+        }
+      }
+    } catch (err) {
+      console.warn('Booking commission creation failed:', err?.message || err);
+    }
+  };
+
   const createInvoiceForBooking = async (bookingRecord) => {
     if (!bookingRecord?.id || !bookingRecord?.client_id || !supabase) return;
 
@@ -1248,6 +1300,7 @@ export default function Bookings({ language = 'en', onNotification }) {
       const { error: updateInvoiceError } = await supabase.from('invoices').update(invoicePayload).eq('id', existingInvoice.id);
       if (updateInvoiceError) throw updateInvoiceError;
 
+      await createCommissionEntriesForBooking({ ...bookingRecord, ...payload, agent_id: bookingRecord.agent_id });
       await supabase.from('bookings').update({ status: 'processing' }).eq('id', bookingRecord.id);
       return;
     }
@@ -1255,6 +1308,7 @@ export default function Bookings({ language = 'en', onNotification }) {
     const { error: insertInvoiceError } = await supabase.from('invoices').insert([invoicePayload]);
     if (insertInvoiceError) throw insertInvoiceError;
 
+    await createCommissionEntriesForBooking({ ...bookingRecord, ...payload, agent_id: bookingRecord.agent_id });
     await supabase.from('bookings').update({ status: 'processing' }).eq('id', bookingRecord.id);
   };
 

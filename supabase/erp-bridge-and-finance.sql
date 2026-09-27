@@ -322,35 +322,57 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
   IF NEW.status = 'PAID' THEN
-    IF NEW.invoice_id IS NULL THEN
-      RAISE EXCEPTION 'Commissions cannot be marked PAID without an invoice reference.';
+    IF NEW.invoice_id IS NOT NULL THEN
+      IF EXISTS (
+        SELECT 1
+        FROM public.invoices i
+        WHERE i.id = NEW.invoice_id
+          AND i.status = 'paid'
+          AND COALESCE(i.amount_paid, 0) >= COALESCE(i.grand_total, 0)
+      ) THEN
+        RETURN NEW;
+      END IF;
     END IF;
 
-    IF NOT EXISTS (
-      SELECT 1
-      FROM public.invoices i
-      WHERE i.id = NEW.invoice_id
-        AND i.status = 'paid'
-        AND COALESCE(i.amount_paid, 0) >= COALESCE(i.grand_total, 0)
-    ) THEN
-      RAISE EXCEPTION 'Commission payouts are blocked until the related invoice is fully paid.';
+    IF NEW.booking_id IS NOT NULL THEN
+      IF EXISTS (
+        SELECT 1
+        FROM public.bookings b
+        WHERE b.id = NEW.booking_id
+          AND b.status = 'confirmed'
+      ) THEN
+        RETURN NEW;
+      END IF;
     END IF;
+
+    RAISE EXCEPTION 'Commission payouts are blocked until the related invoice is fully paid or the booking is confirmed.';
   END IF;
 
   IF NEW.status = 'READY_TO_PAY' THEN
-    IF NEW.invoice_id IS NULL THEN
-      RAISE EXCEPTION 'Commissions cannot be marked READY_TO_PAY without an invoice reference.';
+    IF NEW.invoice_id IS NOT NULL THEN
+      IF EXISTS (
+        SELECT 1
+        FROM public.invoices i
+        WHERE i.id = NEW.invoice_id
+          AND i.status = 'paid'
+          AND COALESCE(i.amount_paid, 0) >= COALESCE(i.grand_total, 0)
+      ) THEN
+        RETURN NEW;
+      END IF;
     END IF;
 
-    IF NOT EXISTS (
-      SELECT 1
-      FROM public.invoices i
-      WHERE i.id = NEW.invoice_id
-        AND i.status = 'paid'
-        AND COALESCE(i.amount_paid, 0) >= COALESCE(i.grand_total, 0)
-    ) THEN
-      RAISE EXCEPTION 'A commission cannot be marked READY_TO_PAY before the invoice is fully settled.';
+    IF NEW.booking_id IS NOT NULL THEN
+      IF EXISTS (
+        SELECT 1
+        FROM public.bookings b
+        WHERE b.id = NEW.booking_id
+          AND b.status = 'confirmed'
+      ) THEN
+        RETURN NEW;
+      END IF;
     END IF;
+
+    RAISE EXCEPTION 'A commission cannot be marked READY_TO_PAY before the invoice is fully settled or the booking is confirmed.';
   END IF;
 
   RETURN NEW;

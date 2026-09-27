@@ -152,17 +152,14 @@ export default function Invoices({ language = 'en' }) {
   const [selectedInvoicePayers, setSelectedInvoicePayers] = useState({});
   const navigate = useNavigate();
 
-  const createCommissionEntriesForInvoice = async (invoice, totalPaid) => {
+  const createCommissionEntriesForInvoice = async (invoice, totalPaid = 0) => {
     if (!supabase || !invoice?.booking_id) return;
-
-    const grandTotal = Number(invoice.grand_total || 0);
-    if (!(grandTotal > 0) || Number(totalPaid || 0) < grandTotal) return;
 
     try {
       const settings = await fetchAgencySettings();
       const { data: bookingData, error: bookingError } = await supabase
         .from('bookings')
-        .select('id, agent_id, package_id, package_ids')
+        .select('id, agent_id, status, package_id, package_ids')
         .eq('id', invoice.booking_id)
         .maybeSingle();
 
@@ -197,22 +194,38 @@ export default function Invoices({ language = 'en' }) {
       const { data: existingRows, error: existingError } = await supabase
         .from('agent_commissions')
         .select('id, booking_id, invoice_id, agent_id')
-        .eq('invoice_id', invoice.id)
-        .eq('booking_id', invoice.booking_id);
+        .eq('booking_id', invoice.booking_id)
+        .eq('invoice_id', invoice.id);
 
       if (existingError) throw existingError;
 
       const existingKeys = new Set((existingRows || []).map((row) => `${row.booking_id}|${row.invoice_id}|${row.agent_id}`));
       const rowsToInsert = commissionRows.filter((row) => !existingKeys.has(`${row.booking_id}|${row.invoice_id}|${row.agent_id}`));
 
-      if (rowsToInsert.length === 0) return;
+      if (rowsToInsert.length > 0) {
+        const { error: insertError } = await supabase.from('agent_commissions').insert(rowsToInsert);
+        if (insertError) {
+          console.warn('Unable to create commission entries for invoice settlement:', insertError.message || insertError);
+        }
+      }
 
-      const { error: insertError } = await supabase
-        .from('agent_commissions')
-        .insert(rowsToInsert);
+      const grandTotal = Number(invoice.grand_total || 0);
+      const isFullyPaid = grandTotal > 0 && Number(totalPaid || 0) >= grandTotal;
+      const isConfirmed = bookingData?.status === 'confirmed';
 
-      if (insertError) {
-        console.warn('Unable to create commission entries for invoice settlement:', insertError.message || insertError);
+      if (isFullyPaid || isConfirmed) {
+        const { error } = await supabase
+          .from('agent_commissions')
+          .update({
+            status: 'READY_TO_PAY',
+            updated_at: new Date().toISOString(),
+          })
+          .eq('booking_id', invoice.booking_id)
+          .in('status', ['PENDING_PAYMENT', 'READY_TO_PAY']);
+
+        if (error) {
+          console.warn('Unable to unlock commission after settlement or confirmation:', error.message || error);
+        }
       }
     } catch (err) {
       console.warn('Commission creation check failed:', err?.message || err);
@@ -222,10 +235,21 @@ export default function Invoices({ language = 'en' }) {
   const unlockCommissionAfterInvoiceSettlement = async (invoice, totalPaid) => {
     if (!supabase || !invoice?.booking_id) return;
 
-    const grandTotal = Number(invoice.grand_total || 0);
-    if (!(grandTotal > 0) || Number(totalPaid || 0) < grandTotal) return;
-
     try {
+      const { data: bookingData, error: bookingError } = await supabase
+        .from('bookings')
+        .select('status')
+        .eq('id', invoice.booking_id)
+        .maybeSingle();
+
+      if (bookingError) throw bookingError;
+
+      const grandTotal = Number(invoice.grand_total || 0);
+      const isFullyPaid = grandTotal > 0 && Number(totalPaid || 0) >= grandTotal;
+      const isConfirmed = bookingData?.status === 'confirmed';
+
+      if (!isFullyPaid && !isConfirmed) return;
+
       const { error } = await supabase
         .from('agent_commissions')
         .update({
@@ -233,7 +257,7 @@ export default function Invoices({ language = 'en' }) {
           updated_at: new Date().toISOString(),
         })
         .eq('booking_id', invoice.booking_id)
-        .eq('status', 'PENDING_PAYMENT');
+        .in('status', ['PENDING_PAYMENT', 'READY_TO_PAY']);
 
       if (error) {
         console.warn('Unable to unlock commission after invoice settlement:', error.message || error);
@@ -383,7 +407,7 @@ export default function Invoices({ language = 'en' }) {
         supabase
           .from('invoices')
           .select(
-            'id, booking_id, client_id, invoice_number, subtotal, apply_tva, tva_amount, grand_total, status, payment_type, amount_paid, paid_at, account_id, reference, note, is_template, clients(full_name, phone, email, reference), bookings(client_id, co_clients, passengers)'
+            'id, booking_id, client_id, invoice_number, subtotal, apply_tva, tva_amount, grand_total, status, payment_type, amount_paid, paid_at, account_id, reference, note, is_template, clients(full_name, phone, email, reference)'
           )
           .order('invoice_number', { ascending: false }),
         supabase.from('financial_accounts').select('id, label, bank_name, currency').order('label', { ascending: true }),
@@ -401,9 +425,23 @@ export default function Invoices({ language = 'en' }) {
       if (error) throw error;
 
       const clientLookup = Object.fromEntries((clientRows || []).map((client) => [client.id, client.full_name]));
+      const bookingIds = [...new Set((data || []).map((invoice) => invoice.booking_id).filter(Boolean))];
+      let bookingLookup = {};
+
+      if (bookingIds.length > 0) {
+        const { data: bookingsData, error: bookingsError } = await supabase
+          .from('bookings')
+          .select('id, client_id, co_clients, passengers')
+          .in('id', bookingIds);
+
+        if (bookingsError) throw bookingsError;
+
+        bookingLookup = Object.fromEntries((bookingsData || []).map((booking) => [booking.id, booking]));
+      }
 
       const sortedInvoices = (data || []).map((invoice) => ({
         ...invoice,
+        bookings: bookingLookup[invoice.booking_id] || null,
         client_name: invoice.clients?.full_name || 'Client',
         client_reference: invoice.clients?.reference || '—',
       }));
