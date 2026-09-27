@@ -133,7 +133,7 @@ function SupplierDetailInner() {
 
       const bookingLinesResult = await supabase
         .from('booking_service_lines')
-        .select('booking_id, bookings(id, reference, status, created_at, package_lines, clients(full_name), booking_service_lines(id, service_type_id, service_types(name)))')
+        .select('booking_id, bookings(id, reference, status, created_at, package_id, package_ids, clients(full_name), booking_service_lines(id, service_type_id, service_types(name)))')
         .eq('supplier_id', supplierId);
 
       if (bookingLinesResult.error && /booking_service_lines|does not exist|relation .* does not exist/i.test(bookingLinesResult.error.message || '')) {
@@ -148,6 +148,13 @@ function SupplierDetailInner() {
         if (!booking || !booking.id) return;
 
         const serviceTypeNames = [...new Set((booking.booking_service_lines || []).map((line) => line.service_types?.name || line.service_type_id).filter(Boolean))];
+        const packageIds = Array.isArray(booking.package_ids)
+          ? booking.package_ids
+          : typeof booking.package_ids === 'string'
+            ? booking.package_ids.split(',').map((value) => value.trim()).filter(Boolean)
+            : booking.package_id
+              ? [booking.package_id]
+              : [];
 
         bookingsById.set(booking.id, {
           id: booking.id,
@@ -156,7 +163,7 @@ function SupplierDetailInner() {
           status: booking.status || 'pending',
           created_at: booking.created_at,
           service_type_names: serviceTypeNames,
-          package_lines: booking.package_lines || [],
+          package_ids: packageIds,
           clients: booking.clients || null,
           client_name: booking.clients?.full_name || 'Unknown Client',
         });
@@ -403,12 +410,16 @@ function SupplierDetailInner() {
                             }
 
                             try {
-                              const packages = typeof booking.package_lines === 'string'
-                                ? JSON.parse(booking.package_lines)
-                                : (booking.package_lines || []);
+                              const packageIdsForBooking = Array.isArray(booking.package_ids)
+                                ? booking.package_ids
+                                : typeof booking.package_ids === 'string'
+                                  ? booking.package_ids.split(',').map((value) => value.trim()).filter(Boolean)
+                                  : booking.package_id
+                                    ? [booking.package_id]
+                                    : [];
 
-                              if (packages.length > 0) {
-                                return packages.map((entry) => entry.package_name || 'Package').join(', ');
+                              if (packageIdsForBooking.length > 0) {
+                                return packageIdsForBooking.join(', ');
                               }
 
                               return '—';

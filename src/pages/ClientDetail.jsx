@@ -116,7 +116,7 @@ export default function ClientDetail() {
         supabase.from('clients').select('*, reference').eq('id', clientId).maybeSingle(),
         supabase
           .from('bookings')
-          .select('id, client_id, reference, status, selling_price, finish_date, created_at, package_id, service_id, package_lines, booking_service_lines(id, service_type_id, details, service_types(name))')
+          .select('id, client_id, reference, status, selling_price, finish_date, created_at, package_id, package_ids, service_id, booking_service_lines(id, service_type_id, details, service_types(name))')
           .eq('client_id', clientId)
           .order('created_at', { ascending: false }),
         supabase
@@ -146,7 +146,21 @@ export default function ClientDetail() {
 
       const bookingIds = (bookingsResult.data || []).map((booking) => booking.id).filter(Boolean);
       const invoiceBookingIds = (invoicesResult.data || []).map((invoice) => invoice.booking_id).filter(Boolean);
-      const packageIds = (bookingsResult.data || []).map((booking) => booking.package_id).filter(Boolean);
+      const packageIds = Array.from(
+        new Set(
+          (bookingsResult.data || []).flatMap((booking) => {
+            const raw = booking.package_ids ?? booking.package_id ?? [];
+            if (Array.isArray(raw)) return raw.filter(Boolean);
+            if (typeof raw === 'string') {
+              return raw
+                .split(',')
+                .map((value) => value.trim())
+                .filter(Boolean);
+            }
+            return booking.package_id ? [booking.package_id] : [];
+          })
+        )
+      );
       const serviceTemplateIds = (bookingsResult.data || []).map((booking) => booking.service_id).filter(Boolean);
       const clientServiceTemplateIds = (servicesResult.data || []).map((row) => row.template_id).filter(Boolean);
 
@@ -178,21 +192,35 @@ export default function ClientDetail() {
         progress: computeStagesProgress(row.stages_data || []),
       }));
 
-      const mappedBookings = (bookingsResult.data || []).map((booking) => ({
-        ...booking,
-        packageTitle: packageMap[booking.package_id]?.title || '—',
-        serviceTitle: serviceTemplateMap[booking.service_id]?.title || '—',
-        bookingReference: bookingReferenceMap[booking.id]?.reference || null,
-        serviceTypeNames: [...new Set((booking.booking_service_lines || []).map((line) => line.service_types?.name || serviceTypeMap[line.service_type_id]).filter(Boolean))],
-        detailRows: (booking.booking_service_lines || []).map((line) => ({
-          id: line.id,
-          serviceTypeName: line.service_types?.name || serviceTypeMap[line.service_type_id] || 'Service line',
-          fields: Object.entries(typeof line.details === 'object' && line.details ? line.details : {}).map(([key, value]) => ({
-            key,
-            value,
+      const mappedBookings = (bookingsResult.data || []).map((booking) => {
+        const packageIdsForBooking = Array.isArray(booking.package_ids)
+          ? booking.package_ids
+          : typeof booking.package_ids === 'string'
+            ? booking.package_ids.split(',').map((value) => value.trim()).filter(Boolean)
+            : booking.package_id
+              ? [booking.package_id]
+              : [];
+
+        const packageTitles = packageIdsForBooking
+          .map((id) => packageMap[id]?.title)
+          .filter(Boolean);
+
+        return {
+          ...booking,
+          packageTitle: packageTitles[0] || packageMap[booking.package_id]?.title || '—',
+          serviceTitle: serviceTemplateMap[booking.service_id]?.title || '—',
+          bookingReference: bookingReferenceMap[booking.id]?.reference || null,
+          serviceTypeNames: [...new Set((booking.booking_service_lines || []).map((line) => line.service_types?.name || serviceTypeMap[line.service_type_id]).filter(Boolean))],
+          detailRows: (booking.booking_service_lines || []).map((line) => ({
+            id: line.id,
+            serviceTypeName: line.service_types?.name || serviceTypeMap[line.service_type_id] || 'Service line',
+            fields: Object.entries(typeof line.details === 'object' && line.details ? line.details : {}).map(([key, value]) => ({
+              key,
+              value,
+            })),
           })),
-        })),
-      }));
+        };
+      });
 
       const invoiceNoteLog = (invoicesResult.data || []).map((invoice) => ({
         ...invoice,
@@ -435,12 +463,19 @@ export default function ClientDetail() {
                             }
 
                             try {
-                              const packages = typeof booking.package_lines === 'string'
-                                ? JSON.parse(booking.package_lines)
-                                : (booking.package_lines || []);
+                              const packageIdsForBooking = Array.isArray(booking.package_ids)
+                                ? booking.package_ids
+                                : typeof booking.package_ids === 'string'
+                                  ? booking.package_ids.split(',').map((value) => value.trim()).filter(Boolean)
+                                  : booking.package_id
+                                    ? [booking.package_id]
+                                    : [];
 
-                              if (packages.length > 0) {
-                                return packages.map((entry) => entry.package_name || 'Package').join(', ');
+                              if (packageIdsForBooking.length > 0) {
+                                return packageIdsForBooking
+                                  .map((id) => booking.packageTitle || id)
+                                  .filter(Boolean)
+                                  .join(', ') || 'Package';
                               }
 
                               return booking.serviceTitle || booking.packageTitle || '—';

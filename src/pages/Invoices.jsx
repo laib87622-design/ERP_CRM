@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/currency';
 import { openInvoicePdf } from '../lib/invoicePdf';
 import { isDuplicateInvoicePayment } from '../lib/financialAudit';
+import { calculateCommissionAmount, fetchAgencySettings, getCommissionRuleForType, slugifyCommissionTypeKey } from '../lib/agencySettings';
 import exportToCSV from '../utils/exportToCSV';
 
 const statusStyles = {
@@ -151,6 +152,60 @@ export default function Invoices({ language = 'en' }) {
   const [selectedInvoicePayers, setSelectedInvoicePayers] = useState({});
   const navigate = useNavigate();
 
+  const createCommissionEntriesForInvoice = async (invoice, totalPaid) => {
+    if (!supabase || !invoice?.booking_id) return;
+
+    const grandTotal = Number(invoice.grand_total || 0);
+    if (!(grandTotal > 0) || Number(totalPaid || 0) < grandTotal) return;
+
+    try {
+      const settings = await fetchAgencySettings();
+      const { data: bookingData, error: bookingError } = await supabase
+        .from('bookings')
+        .select('id, agent_id, package_id, package_ids')
+        .eq('id', invoice.booking_id)
+        .maybeSingle();
+
+      if (bookingError) throw bookingError;
+      if (!bookingData?.agent_id) return;
+
+      const { data: serviceLines, error: linesError } = await supabase
+        .from('booking_service_lines')
+        .select('id, booking_id, service_type_id, selling_price, cost_price, service_types(name)')
+        .eq('booking_id', invoice.booking_id);
+
+      if (linesError) throw linesError;
+
+      const commissionRows = (serviceLines || []).map((line) => {
+        const serviceTypeName = String(line?.service_types?.name || 'custom_service').trim();
+        const typeKey = slugifyCommissionTypeKey(serviceTypeName);
+        const rule = getCommissionRuleForType(typeKey, settings);
+        const profit = Math.max(Number(line?.selling_price || 0) - Number(line?.cost_price || 0), 0);
+        const amount = rule.enabled ? calculateCommissionAmount(typeKey, profit, settings) : 0;
+        return {
+          agent_id: bookingData.agent_id,
+          booking_id: invoice.booking_id,
+          invoice_id: invoice.id,
+          amount: Number(amount || 0),
+          status: 'PENDING_PAYMENT',
+          notes: `${serviceTypeName} commission pending payment`,
+        };
+      }).filter((row) => Number(row.amount || 0) > 0);
+
+      if (commissionRows.length === 0) return;
+
+      const { error: insertError } = await supabase
+        .from('agent_commissions')
+        .upsert(commissionRows, { onConflict: 'booking_id,invoice_id,agent_id' });
+
+      if (insertError) {
+        console.warn('Unable to create commission entries for invoice settlement:', insertError.message || insertError);
+      }
+    } catch (err) {
+      console.warn('Commission creation check failed:', err?.message || err);
+    }
+  };
+
   const unlockCommissionAfterInvoiceSettlement = async (invoice, totalPaid) => {
     if (!supabase || !invoice?.booking_id) return;
 
@@ -290,6 +345,7 @@ export default function Invoices({ language = 'en' }) {
 
       await syncBookingStatusFromInvoice(supabase, { ...invoice, ...updatePayload, booking_id: invoice.booking_id });
       await recordInvoicePaymentInBanking(invoice, amountPaidValue, selectedAccountId, selectedPayerLabel);
+      await createCommissionEntriesForInvoice({ ...invoice, ...updatePayload }, amountPaidValue);
       await unlockCommissionAfterInvoiceSettlement(invoice, amountPaidValue);
       await fetchInvoices();
     } catch (err) {
