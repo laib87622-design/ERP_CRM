@@ -194,9 +194,22 @@ export default function Invoices({ language = 'en' }) {
 
       if (commissionRows.length === 0) return;
 
+      const { data: existingRows, error: existingError } = await supabase
+        .from('agent_commissions')
+        .select('id, booking_id, invoice_id, agent_id')
+        .eq('invoice_id', invoice.id)
+        .eq('booking_id', invoice.booking_id);
+
+      if (existingError) throw existingError;
+
+      const existingKeys = new Set((existingRows || []).map((row) => `${row.booking_id}|${row.invoice_id}|${row.agent_id}`));
+      const rowsToInsert = commissionRows.filter((row) => !existingKeys.has(`${row.booking_id}|${row.invoice_id}|${row.agent_id}`));
+
+      if (rowsToInsert.length === 0) return;
+
       const { error: insertError } = await supabase
         .from('agent_commissions')
-        .upsert(commissionRows, { onConflict: 'booking_id,invoice_id,agent_id' });
+        .insert(rowsToInsert);
 
       if (insertError) {
         console.warn('Unable to create commission entries for invoice settlement:', insertError.message || insertError);

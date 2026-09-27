@@ -81,6 +81,9 @@ CREATE INDEX IF NOT EXISTS agent_commissions_agent_idx
 CREATE INDEX IF NOT EXISTS agent_commissions_booking_idx
   ON public.agent_commissions (booking_id, status);
 
+CREATE UNIQUE INDEX IF NOT EXISTS agent_commissions_booking_invoice_agent_unique
+  ON public.agent_commissions (booking_id, invoice_id, agent_id);
+
 CREATE TABLE IF NOT EXISTS booking_packages (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   booking_id uuid NOT NULL,
