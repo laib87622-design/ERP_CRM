@@ -182,45 +182,76 @@ export const calculateCommissionPreview = (items = [], commissionRules = {}) => 
   };
 };
 
-export async function calculateAndInsertCommission(bookingId, agentId, items = []) {
-  if (!bookingId || !agentId || !Array.isArray(items) || items.length === 0) {
+export async function calculateAndInsertCommission(bookingId, agentId) {
+  if (!bookingId || !agentId) {
     return 0;
   }
 
-  const settings = await fetchAgencySettings();
-  const preview = calculateCommissionPreview(items, settings.commission_rules || {});
+  const { data: settingsData, error: settingsError } = await supabase
+    .from('agency_settings')
+    .select('commission_rules')
+    .order('created_at', { ascending: false })
+    .limit(1);
 
-  if (preview.totalCommission <= 0) {
+  if (settingsError || !settingsData || settingsData.length === 0) {
+    console.error('Failed to fetch commission rules:', settingsError);
     return 0;
   }
 
-  const { data: existingRow, error: existingError } = await supabase
-    .from('agent_commissions')
-    .select('id, amount')
-    .eq('booking_id', bookingId)
-    .eq('agent_id', agentId)
-    .is('invoice_id', null)
-    .maybeSingle();
+  const commissionRules = settingsData[0].commission_rules || {};
 
-  if (existingError) {
-    throw existingError;
+  const { data: serviceLines, error: linesError } = await supabase
+    .from('booking_service_lines')
+    .select(`
+      selling_price,
+      cost_price,
+      service_types (name)
+    `)
+    .eq('booking_id', bookingId);
+
+  if (linesError || !serviceLines) {
+    console.error('Failed to fetch service lines:', linesError);
+    return 0;
   }
 
-  if (existingRow?.id) {
-    const { data: updatedRow, error: updateError } = await supabase
-      .from('agent_commissions')
-      .update({
-        amount: preview.totalCommission,
-        status: 'PENDING_PAYMENT',
-        notes: 'Auto-created from booking items',
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', existingRow.id)
-      .select()
-      .single();
+  let totalCommission = 0;
 
-    if (updateError) throw updateError;
-    return Number(updatedRow?.amount ?? preview.totalCommission);
+  console.log('Starting calculation for booking service lines:', serviceLines);
+
+  serviceLines.forEach((line) => {
+    const name = line?.service_types?.name;
+
+    if (!name) {
+      console.warn('Service line has no matching service type name, skipping:', line);
+      return;
+    }
+
+    const ruleKey = name.toLowerCase().replace(/-/g, '_').replace(/ /g, '_');
+    const rule = commissionRules[ruleKey];
+
+    console.log(`Checking rule for ${name} (Key: ${ruleKey}) ->`, rule);
+
+    if (rule && rule.enabled) {
+      if (rule.method === 'percentage') {
+        const profit = Number(line.selling_price || 0) - Number(line.cost_price || 0);
+        const cut = profit * (Number(rule.percentage || 0) / 100);
+        console.log(`Percentage match: Profit ${profit} * ${rule.percentage}% = ${cut}`);
+        totalCommission += cut;
+      } else if (rule.method === 'amount') {
+        const cut = Number(rule.amount || 0);
+        console.log(`Fixed amount match: ${cut}`);
+        totalCommission += cut;
+      }
+    } else {
+      console.warn(`No active rule found for key: ${ruleKey}`);
+    }
+  });
+
+  totalCommission = Number(totalCommission.toFixed(2));
+  console.log('Final Total Commission Calculated:', totalCommission);
+
+  if (totalCommission <= 0) {
+    return 0;
   }
 
   const { data: insertedRow, error: insertError } = await supabase
@@ -230,9 +261,9 @@ export async function calculateAndInsertCommission(bookingId, agentId, items = [
         agent_id: agentId,
         booking_id: bookingId,
         invoice_id: null,
-        amount: preview.totalCommission,
+        amount: totalCommission,
         status: 'PENDING_PAYMENT',
-        notes: 'Auto-created from booking items',
+        notes: 'Auto-created from booking service lines',
       },
     ])
     .select()
@@ -242,7 +273,8 @@ export async function calculateAndInsertCommission(bookingId, agentId, items = [
     throw insertError;
   }
 
-  return Number(insertedRow?.amount ?? preview.totalCommission);
+  console.log('Commission saved successfully');
+  return Number(insertedRow?.amount ?? totalCommission);
 }
 
 export const defaultAgencySettings = {
