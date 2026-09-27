@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Building2, Landmark, Plus, Save } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
+const paymentMethodOptions = ['Cash', 'Bank Transfer', 'Credit Card', 'BaridiMob'];
+
 const defaultForm = {
   label: '',
   currency: 'DZD',
@@ -12,6 +14,7 @@ const defaultForm = {
   bank_name: '',
   iban: '',
   swift_bic: '',
+  accepted_payment_methods: [],
 };
 
 export default function NewFinancialAccount() {
@@ -24,6 +27,20 @@ export default function NewFinancialAccount() {
   const handleChange = (event) => {
     const { name, value } = event.target;
     setForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handlePaymentMethodToggle = (value) => {
+    setForm((prev) => {
+      const selected = Array.isArray(prev.accepted_payment_methods) ? prev.accepted_payment_methods : [];
+      const next = selected.includes(value)
+        ? selected.filter((item) => item !== value)
+        : [...selected, value];
+
+      return {
+        ...prev,
+        accepted_payment_methods: next,
+      };
+    });
   };
 
   const handleSubmit = async (event) => {
@@ -59,6 +76,7 @@ export default function NewFinancialAccount() {
         bank_name: form.bank_name.trim(),
         iban: form.iban.trim(),
         swift_bic: form.swift_bic.trim(),
+        accepted_payment_methods: Array.isArray(form.accepted_payment_methods) ? form.accepted_payment_methods : [],
         created_at: new Date().toISOString(),
       };
 
@@ -162,6 +180,26 @@ export default function NewFinancialAccount() {
                 placeholder="Algeria"
                 className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 text-brand-navy outline-none focus:border-brand-gold"
               />
+            </div>
+
+            <div className="space-y-2 md:col-span-2">
+              <label className="text-sm font-medium text-brand-navy">Accepted Payment Methods</label>
+              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                {paymentMethodOptions.map((method) => {
+                  const checked = (form.accepted_payment_methods || []).includes(method);
+
+                  return (
+                    <label key={method} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-brand-surface px-3 py-2 text-sm text-brand-navy">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => handlePaymentMethodToggle(method)}
+                      />
+                      <span>{method}</span>
+                    </label>
+                  );
+                })}
+              </div>
             </div>
 
             <div className="space-y-2">

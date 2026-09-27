@@ -150,7 +150,12 @@ export async function openInvoicePdf(invoice, client = null) {
           ? 'BaridiMob'
           : invoice?.payment_method === 'cash'
             ? 'Cash'
-            : invoice?.payment_method || 'Cash';
+            : invoice?.payment_method === 'bank_transfer'
+              ? 'Bank Transfer'
+              : invoice?.payment_method || 'Cash';
+    const paymentMethodLine = invoice?.status === 'paid' && invoice?.payment_method
+      ? `<div style="margin-top: 10px; font-size: 13px; color: #0f172a; font-weight: 700;">Payment Method: ${paymentMethodLabel}</div>`
+      : '';
     const agencyName = agency?.agency_name || 'AIRVOY';
     const agencyAddress = [agency?.address, agency?.city, agency?.wilaya].filter(Boolean).join(', ') || 'Algiers, Algeria';
     const agencyPhone = agency?.phone || '—';
@@ -478,6 +483,8 @@ export async function openInvoicePdf(invoice, client = null) {
                 </div>
               </div>
             </div>
+
+            ${paymentMethodLine}
 
             <div class="footer">
               <div class="legal">

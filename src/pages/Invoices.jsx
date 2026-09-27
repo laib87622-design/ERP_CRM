@@ -16,6 +16,51 @@ const statusStyles = {
   partial: 'bg-orange-100 text-orange-700',
 };
 
+const defaultInvoicePaymentMethods = ['cash', 'bank_transfer', 'credit_card', 'baridimob'];
+
+const normalizePaymentMethodValue = (value) => {
+  const normalized = String(value || 'cash').trim().toLowerCase();
+  const byLabel = {
+    cash: 'cash',
+    'bank transfer': 'bank_transfer',
+    bank_transfer: 'bank_transfer',
+    'credit card': 'credit_card',
+    credit_card: 'credit_card',
+    baridimob: 'baridimob',
+    'baridi mob': 'baridimob',
+  };
+
+  return byLabel[normalized] || normalized || 'cash';
+};
+
+const getPaymentMethodLabel = (value) => {
+  const normalized = normalizePaymentMethodValue(value);
+  const labels = {
+    cash: 'Cash',
+    bank_transfer: 'Bank Transfer',
+    credit_card: 'Credit Card',
+    baridimob: 'BaridiMob',
+  };
+
+  return labels[normalized] || 'Cash';
+};
+
+const getPaymentMethodsForAccount = (account = null) => {
+  const rawMethods = Array.isArray(account?.accepted_payment_methods)
+    ? account.accepted_payment_methods
+    : [];
+
+  const normalized = rawMethods
+    .map((method) => normalizePaymentMethodValue(method))
+    .filter(Boolean);
+
+  if (normalized.length > 0) {
+    return [...new Set(normalized)];
+  }
+
+  return [...defaultInvoicePaymentMethods];
+};
+
 const getInvoicePaymentType = (invoice) => (invoice?.payment_type === 'partial' ? 'partial' : 'full');
 
 const getInvoicePaymentMeta = (invoice, paymentTypeOverride, amountPaidOverride) => {
@@ -145,6 +190,7 @@ export default function Invoices({ language = 'en' }) {
   const [error, setError] = useState('');
   const [processingInvoiceId, setProcessingInvoiceId] = useState(null);
   const [invoicePaymentTypes, setInvoicePaymentTypes] = useState({});
+  const [invoicePaymentMethods, setInvoicePaymentMethods] = useState({});
   const [invoicePartialAmounts, setInvoicePartialAmounts] = useState({});
   const [financialAccounts, setFinancialAccounts] = useState([]);
   const [selectedInvoiceAccountIds, setSelectedInvoiceAccountIds] = useState({});
@@ -322,6 +368,9 @@ export default function Invoices({ language = 'en' }) {
     const selectedPayerId = selectedInvoicePayers[invoice.id] || invoice.client_id || null;
     const selectedPayerLabel = (invoicePayerOptions[invoice.id] || []).find((payer) => payer.id === selectedPayerId)?.label || invoice.client_name || 'Customer';
     const selectedAccountId = selectedInvoiceAccountIds[invoice.id] || invoice.account_id || null;
+    const selectedAccount = (financialAccounts || []).find((account) => account.id === selectedAccountId) || null;
+    const selectedPaymentMethod = invoicePaymentMethods[invoice.id] || invoice.payment_method || getPaymentMethodsForAccount(selectedAccount)[0] || 'cash';
+    const normalizedPaymentMethod = normalizePaymentMethodValue(selectedPaymentMethod);
     const nextGrandTotal = Number(invoice.grand_total || 0);
     const paymentMeta = getInvoicePaymentMeta(invoice, selectedType, partialAmountRaw);
     const amountToRecord = options.forceFull ? nextGrandTotal : paymentMeta.amountPaid;
@@ -373,6 +422,7 @@ export default function Invoices({ language = 'en' }) {
         paid_at: fullPayment ? new Date().toISOString() : invoice.paid_at || new Date().toISOString(),
         payment_type: fullPayment ? 'full' : 'partial',
         amount_paid: amountPaidValue,
+        payment_method: normalizedPaymentMethod,
         account_id: selectedAccountId,
         agent_id: userData?.user?.id || null,
       };
@@ -407,10 +457,10 @@ export default function Invoices({ language = 'en' }) {
         supabase
           .from('invoices')
           .select(
-            'id, booking_id, client_id, invoice_number, subtotal, apply_tva, tva_amount, grand_total, status, payment_type, amount_paid, paid_at, account_id, reference, note, is_template, clients(full_name, phone, email, reference)'
+            'id, booking_id, client_id, invoice_number, subtotal, apply_tva, tva_amount, grand_total, status, payment_type, amount_paid, paid_at, account_id, payment_method, reference, note, is_template, clients(full_name, phone, email, reference)'
           )
           .order('invoice_number', { ascending: false }),
-        supabase.from('financial_accounts').select('id, label, bank_name, currency').order('label', { ascending: true }),
+        supabase.from('financial_accounts').select('id, label, bank_name, currency, accepted_payment_methods').order('label', { ascending: true }),
         supabase.from('clients').select('id, full_name').order('full_name', { ascending: true }),
       ]);
 
@@ -476,6 +526,9 @@ export default function Invoices({ language = 'en' }) {
 
       setInvoicePaymentTypes(
         Object.fromEntries(sortedInvoices.map((invoice) => [invoice.id, getInvoicePaymentType(invoice)]))
+      );
+      setInvoicePaymentMethods(
+        Object.fromEntries(sortedInvoices.map((invoice) => [invoice.id, normalizePaymentMethodValue(invoice.payment_method || 'cash')]))
       );
       setInvoicePartialAmounts(
         Object.fromEntries(sortedInvoices.map((invoice) => [invoice.id, Number(invoice.amount_paid || 0)]))
@@ -635,6 +688,22 @@ export default function Invoices({ language = 'en' }) {
                             <option value="partial">Partial Payment</option>
                           </select>
 
+                          <select
+                            value={invoicePaymentMethods[invoice.id] || normalizePaymentMethodValue(invoice.payment_method || 'cash')}
+                            onChange={(event) => {
+                              const nextMethod = normalizePaymentMethodValue(event.target.value);
+                              setInvoicePaymentMethods((prev) => ({ ...prev, [invoice.id]: nextMethod }));
+                            }}
+                            className="w-full rounded-xl border border-slate-200 bg-brand-surface px-2.5 py-2 text-sm text-brand-navy outline-none focus:border-brand-gold"
+                            disabled={normalizedStatus === 'paid'}
+                          >
+                            {getPaymentMethodsForAccount(
+                              (financialAccounts || []).find((account) => account.id === (selectedInvoiceAccountIds[invoice.id] || invoice.account_id)) || null
+                            ).map((method) => (
+                              <option key={method} value={method}>{getPaymentMethodLabel(method)}</option>
+                            ))}
+                          </select>
+
                           {selectedPaymentType === 'partial' && (
                             <input
                               type="number"
@@ -671,10 +740,16 @@ export default function Invoices({ language = 'en' }) {
                               const nextAccountId = event.target.value;
                               setSelectedInvoiceAccountIds((prev) => ({ ...prev, [invoice.id]: nextAccountId }));
 
+                              const nextAccount = (financialAccounts || []).find((account) => account.id === nextAccountId) || null;
+                              const allowedMethods = getPaymentMethodsForAccount(nextAccount);
+                              const currentMethod = invoicePaymentMethods[invoice.id] || normalizePaymentMethodValue(invoice.payment_method || 'cash');
+                              const nextMethod = allowedMethods.includes(currentMethod) ? currentMethod : allowedMethods[0] || 'cash';
+                              setInvoicePaymentMethods((prev) => ({ ...prev, [invoice.id]: nextMethod }));
+
                               if (!supabase || !invoice.id) return;
 
                               try {
-                                await supabase.from('invoices').update({ account_id: nextAccountId || null }).eq('id', invoice.id);
+                                await supabase.from('invoices').update({ account_id: nextAccountId || null, payment_method: nextMethod }).eq('id', invoice.id);
                               } catch (saveError) {
                                 console.warn('Unable to save selected invoice account:', saveError);
                               }

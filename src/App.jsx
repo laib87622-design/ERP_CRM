@@ -89,6 +89,41 @@ const labels = {
   },
 };
 
+function ToastNotification({ item, handleDismiss, language, isDarkMode }) {
+  useEffect(() => {
+    if (!item?.id) return undefined;
+
+    const timer = window.setTimeout(() => {
+      handleDismiss(item.id);
+    }, 5000);
+
+    return () => window.clearTimeout(timer);
+  }, [item?.id, handleDismiss]);
+
+  return (
+    <div
+      className={`pointer-events-auto relative rounded-2xl border p-4 shadow-xl backdrop-blur-sm ${
+        item.type === 'warning'
+          ? 'border-amber-200 bg-amber-50 text-amber-900'
+          : item.type === 'success'
+            ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+            : 'border-slate-200 bg-white text-slate-800'
+      } ${isDarkMode ? 'shadow-slate-900/50' : ''}`}
+    >
+      <button
+        type="button"
+        onClick={() => handleDismiss(item.id)}
+        className="absolute right-2 top-2 text-slate-400 hover:text-slate-600"
+        aria-label={language === 'en' ? 'Dismiss notification' : 'إغلاق الإشعار'}
+      >
+        ✕
+      </button>
+      <p className="pr-6 text-xs font-bold uppercase tracking-[0.18em] opacity-75">{item.title}</p>
+      <p className="mt-2 pr-6 text-sm leading-6">{item.message}</p>
+    </div>
+  );
+}
+
 function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [language, setLanguage] = useState(() => {
@@ -149,6 +184,24 @@ function App() {
           notification.id === notificationId ? { ...notification, is_read: true } : notification
         )
       );
+    }
+  };
+
+  const handleDismiss = async (notificationId) => {
+    setNotifications((prev) => prev.filter((notification) => notification.id !== notificationId));
+
+    if (!supabase || !session?.user?.id) {
+      return;
+    }
+
+    const { error } = await supabase
+      .from('notifications')
+      .update({ is_read: true, read_at: new Date().toISOString() })
+      .eq('id', notificationId)
+      .eq('user_id', session.user.id);
+
+    if (error) {
+      console.error('Failed to dismiss notification:', error);
     }
   };
 
@@ -425,35 +478,45 @@ function App() {
                           const localizedItem = localizeNotification(item);
 
                           return (
-                            <button
-                              key={item.id}
-                              type="button"
-                              onClick={() => handleNotificationClick(item)}
-                              className={`block w-full rounded-xl border p-3 text-left transition ${
-                                item.is_read ? 'border-slate-200 bg-brand-surface' : 'border-brand-gold/40 bg-amber-50'
-                              }`}
-                            >
-                              <div className="mb-2 flex items-center justify-between gap-3">
-                                <p className="text-xs font-bold uppercase tracking-[0.14em] text-brand-gold">{localizedItem.title}</p>
-                                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${notificationChannels[item.channel || 'system']?.tone || 'bg-slate-100 text-slate-700'}`}>
-                                  {notificationChannels[item.channel || 'system']?.label || (language === 'en' ? 'System' : 'النظام')}
-                                </span>
-                              </div>
-                              <p className="text-sm leading-6 text-slate-700">{localizedItem.message}</p>
-                              <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-400">
-                                <span>
-                                  {new Date(item.created_at || item.createdAt).toLocaleString(language === 'ar' ? 'ar-DZ' : 'en-GB', {
-                                    dateStyle: 'short',
-                                    timeStyle: 'short',
-                                  })}
-                                </span>
-                                {!item.is_read && (
-                                  <span className="rounded-full bg-brand-gold px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-brand-navy">
-                                    {language === 'en' ? 'New' : 'جديد'}
+                            <div key={item.id} className="relative">
+                              <button
+                                type="button"
+                                onClick={() => handleNotificationClick(item)}
+                                className={`block w-full rounded-xl border p-3 pr-9 text-left transition ${
+                                  item.is_read ? 'border-slate-200 bg-brand-surface' : 'border-brand-gold/40 bg-amber-50'
+                                }`}
+                              >
+                                <div className="mb-2 flex items-center justify-between gap-3">
+                                  <p className="text-xs font-bold uppercase tracking-[0.14em] text-brand-gold">{localizedItem.title}</p>
+                                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${notificationChannels[item.channel || 'system']?.tone || 'bg-slate-100 text-slate-700'}`}>
+                                    {notificationChannels[item.channel || 'system']?.label || (language === 'en' ? 'System' : 'النظام')}
                                   </span>
-                                )}
-                              </div>
-                            </button>
+                                </div>
+                                <p className="text-sm leading-6 text-slate-700">{localizedItem.message}</p>
+                                <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-400">
+                                  <span>
+                                    {new Date(item.created_at || item.createdAt).toLocaleString(language === 'ar' ? 'ar-DZ' : 'en-GB', {
+                                      dateStyle: 'short',
+                                      timeStyle: 'short',
+                                    })}
+                                  </span>
+                                  {!item.is_read && (
+                                    <span className="rounded-full bg-brand-gold px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-brand-navy">
+                                      {language === 'en' ? 'New' : 'جديد'}
+                                    </span>
+                                  )}
+                                </div>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleDismiss(item.id)}
+                                className="absolute right-2 top-2 text-slate-400 hover:text-slate-600"
+                                aria-label={language === 'en' ? 'Dismiss notification' : 'إغلاق الإشعار'}
+                              >
+                                ✕
+                              </button>
+                            </div>
                           );
                         })
                       )}
@@ -503,19 +566,13 @@ function App() {
           <main className={`flex-1 overflow-y-auto p-8 transition-colors ${isDarkMode ? 'bg-[#0a1120]' : 'bg-brand-surface'}`}>
             <div className="pointer-events-none fixed right-4 top-20 z-[80] flex w-[min(360px,calc(100vw-2rem))] flex-col gap-3">
               {notifications.slice(0, 3).map((item) => (
-                <div
+                <ToastNotification
                   key={item.id}
-                  className={`pointer-events-auto rounded-2xl border p-4 shadow-xl backdrop-blur-sm ${
-                    item.type === 'warning'
-                      ? 'border-amber-200 bg-amber-50 text-amber-900'
-                      : item.type === 'success'
-                        ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
-                        : 'border-slate-200 bg-white text-slate-800'
-                  }`}
-                >
-                  <p className="text-xs font-bold uppercase tracking-[0.18em] opacity-75">{item.title}</p>
-                  <p className="mt-2 text-sm leading-6">{item.message}</p>
-                </div>
+                  item={item}
+                  handleDismiss={handleDismiss}
+                  language={language}
+                  isDarkMode={isDarkMode}
+                />
               ))}
             </div>
 

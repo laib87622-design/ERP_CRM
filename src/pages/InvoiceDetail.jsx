@@ -13,6 +13,51 @@ const statusStyles = {
   partial: 'bg-orange-100 text-orange-700',
 };
 
+const defaultInvoicePaymentMethods = ['cash', 'bank_transfer', 'credit_card', 'baridimob'];
+
+const normalizePaymentMethodValue = (value) => {
+  const normalized = String(value || 'cash').trim().toLowerCase();
+  const byLabel = {
+    cash: 'cash',
+    'bank transfer': 'bank_transfer',
+    bank_transfer: 'bank_transfer',
+    'credit card': 'credit_card',
+    credit_card: 'credit_card',
+    baridimob: 'baridimob',
+    'baridi mob': 'baridimob',
+  };
+
+  return byLabel[normalized] || normalized || 'cash';
+};
+
+const getPaymentMethodLabel = (value) => {
+  const normalized = normalizePaymentMethodValue(value);
+  const labels = {
+    cash: 'Cash',
+    bank_transfer: 'Bank Transfer',
+    credit_card: 'Credit Card',
+    baridimob: 'BaridiMob',
+  };
+
+  return labels[normalized] || 'Cash';
+};
+
+const getPaymentMethodsForAccount = (account = null) => {
+  const rawMethods = Array.isArray(account?.accepted_payment_methods)
+    ? account.accepted_payment_methods
+    : [];
+
+  const normalized = rawMethods
+    .map((method) => normalizePaymentMethodValue(method))
+    .filter(Boolean);
+
+  if (normalized.length > 0) {
+    return [...new Set(normalized)];
+  }
+
+  return [...defaultInvoicePaymentMethods];
+};
+
 const getInvoicePaymentType = (invoice) => (invoice?.payment_type === 'partial' ? 'partial' : 'full');
 
 const getInvoicePaymentMeta = (invoice, paymentTypeOverride, amountPaidOverride) => {
@@ -322,6 +367,8 @@ export default function InvoiceDetail({ language = 'en' }) {
   const computedGrandTotal = Number((computedSubtotal + computedTva).toFixed(2));
   const paymentMeta = getInvoicePaymentMeta({ ...invoice, grand_total: computedGrandTotal }, paymentType, amountPaid);
   const paymentActionLabel = paymentType === 'partial' ? t.markFullPayment : t.markPaid;
+  const selectedAccount = (financialAccounts || []).find((account) => account.id === selectedAccountId) || null;
+  const acceptedPaymentMethods = getPaymentMethodsForAccount(selectedAccount);
 
   const calculateCommissionPayouts = (lines = []) => {
     const settings = agencySettings || null;
@@ -458,18 +505,18 @@ export default function InvoiceDetail({ language = 'en' }) {
             <div>
               <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">{t.paymentMethod}</label>
               <select
-                value={invoice.payment_method || 'cash'}
+                value={normalizePaymentMethodValue(invoice.payment_method || 'cash')}
                 onChange={async (event) => {
                   if (!supabase) return;
-                  const nextMethod = event.target.value;
+                  const nextMethod = normalizePaymentMethodValue(event.target.value);
                   await supabase.from('invoices').update({ payment_method: nextMethod }).eq('id', invoice.id);
                   setInvoice((prev) => ({ ...prev, payment_method: nextMethod }));
                 }}
                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-brand-navy outline-none focus:border-brand-gold"
               >
-                <option value="cash">{t.cash}</option>
-                <option value="credit_card">{t.creditCard}</option>
-                <option value="baridimob">{t.baridimob}</option>
+                {acceptedPaymentMethods.map((method) => (
+                  <option key={method} value={method}>{getPaymentMethodLabel(method)}</option>
+                ))}
               </select>
             </div>
           </div>

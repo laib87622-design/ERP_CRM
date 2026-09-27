@@ -7,6 +7,7 @@ const emptyForm = {
   source_account_id: '',
   target_account_id: '',
   amount: '',
+  target_amount: '',
   transfer_date: new Date().toISOString().slice(0, 10),
   description: '',
 };
@@ -62,8 +63,6 @@ export default function InternalTransfer() {
       return;
     }
 
-    const amount = Number(form.amount || 0);
-
     if (!form.source_account_id || !form.target_account_id) {
       setError('Please select both source and target accounts.');
       return;
@@ -74,8 +73,19 @@ export default function InternalTransfer() {
       return;
     }
 
-    if (!Number.isFinite(amount) || amount <= 0) {
+    const sourceAccount = accounts.find((account) => account.id === form.source_account_id);
+    const targetAccount = accounts.find((account) => account.id === form.target_account_id);
+    const sourceAmount = Number(form.amount || 0);
+    const targetAmount = Number(form.target_amount || 0);
+
+    if (!Number.isFinite(sourceAmount) || sourceAmount <= 0) {
       setError('Transfer amount must be greater than zero.');
+      return;
+    }
+
+    const needsTargetAmount = sourceAccount?.currency && targetAccount?.currency && sourceAccount.currency !== targetAccount.currency;
+    if (needsTargetAmount && (!Number.isFinite(targetAmount) || targetAmount <= 0)) {
+      setError('Please enter the target amount received in the destination currency.');
       return;
     }
 
@@ -84,15 +94,24 @@ export default function InternalTransfer() {
       setError('');
       setSuccess('');
 
+      const finalSourceAmount = sourceAmount;
+      const finalTargetAmount = needsTargetAmount ? targetAmount : sourceAmount;
+      const exchangeRate = finalTargetAmount > 0 ? finalSourceAmount / finalTargetAmount : 0;
+      const baseDescription = form.description.trim() || 'Internal transfer';
+      const transferDescription = needsTargetAmount
+        ? `${baseDescription}. Exchange Rate: 1 ${targetAccount.currency} = ${exchangeRate.toFixed(4)} ${sourceAccount.currency}`
+        : baseDescription;
+
       const payload = {
         source_account_id: form.source_account_id,
         target_account_id: form.target_account_id,
-        transfer_amount: amount,
+        source_amount: finalSourceAmount,
+        target_amount: finalTargetAmount,
         transfer_date: form.transfer_date ? new Date(form.transfer_date).toISOString() : new Date().toISOString(),
-        transfer_description: form.description.trim() || 'Internal transfer',
+        transfer_description: transferDescription,
       };
 
-      const { data, error: rpcError } = await supabase.rpc('execute_internal_transfer', payload);
+      const { error: rpcError } = await supabase.rpc('execute_internal_transfer', payload);
 
       if (rpcError) throw rpcError;
 
@@ -145,7 +164,6 @@ export default function InternalTransfer() {
                   onChange={handleChange}
                   disabled={loading}
                   className="w-full appearance-none rounded-xl border border-slate-200 bg-brand-surface py-2.5 pl-10 pr-8 text-brand-navy outline-none focus:border-brand-gold"
-                  size={Math.min(accounts.length + 1, 8)}
                 >
                   <option value="">Select source account</option>
                   {accounts.map((account) => (
@@ -167,7 +185,6 @@ export default function InternalTransfer() {
                   onChange={handleChange}
                   disabled={loading}
                   className="w-full appearance-none rounded-xl border border-slate-200 bg-brand-surface py-2.5 pl-10 pr-8 text-brand-navy outline-none focus:border-brand-gold"
-                  size={Math.min(accounts.length + 1, 8)}
                 >
                   <option value="">Select target account</option>
                   {accounts.map((account) => (
@@ -180,7 +197,11 @@ export default function InternalTransfer() {
             </div>
 
             <div className="space-y-2">
-              <label className="text-sm font-medium text-brand-navy">Amount</label>
+              <label className="text-sm font-medium text-brand-navy">
+                {sourceAccount?.currency && targetAccount?.currency && sourceAccount.currency !== targetAccount.currency
+                  ? `Source Amount (${sourceAccount.currency})`
+                  : 'Amount'}
+              </label>
               <input
                 type="number"
                 name="amount"
@@ -192,6 +213,22 @@ export default function InternalTransfer() {
                 className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 text-brand-navy outline-none focus:border-brand-gold"
               />
             </div>
+
+            {sourceAccount?.currency && targetAccount?.currency && sourceAccount.currency !== targetAccount.currency && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-brand-navy">Target Amount (Received in {targetAccount.currency})</label>
+                <input
+                  type="number"
+                  name="target_amount"
+                  step="0.01"
+                  min="0.01"
+                  value={form.target_amount}
+                  onChange={handleChange}
+                  placeholder="0.00"
+                  className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 text-brand-navy outline-none focus:border-brand-gold"
+                />
+              </div>
+            )}
 
             <div className="space-y-2">
               <label className="text-sm font-medium text-brand-navy">Date</label>

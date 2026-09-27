@@ -1806,6 +1806,7 @@ export default function Bookings({ language = 'en', onNotification }) {
                 <th className="px-5 py-3">{t.sellingPrice}</th>
                 <th className="px-5 py-3">{t.profit}</th>
                 <th className="px-5 py-3">{t.finishDate}</th>
+                <th className="px-5 py-3">Created</th>
                 <th className="px-5 py-3">{t.status}</th>
                 <th className="px-5 py-3 text-right">{t.actions}</th>
               </tr>
@@ -1864,6 +1865,15 @@ export default function Bookings({ language = 'en', onNotification }) {
                     <td className="px-5 py-4 font-mono font-semibold text-brand-gold">{formatDzd(booking.profit)}</td>
                     <td className={`px-5 py-4 ${booking.isLate ? 'font-semibold text-red-600' : 'text-slate-700'}`}>
                       {booking.dueLabel}
+                    </td>
+                    <td className="px-5 py-4 text-sm text-slate-600">
+                      {booking.created_at ? new Date(booking.created_at).toLocaleString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      }) : '—'}
                     </td>
                     <td className="px-5 py-4">
                       <span
@@ -1957,6 +1967,20 @@ export default function Bookings({ language = 'en', onNotification }) {
                 <X size={20} />
               </button>
             </div>
+
+            {selectedBooking && (
+              <div className="mb-5 flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-4 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+                <span>
+                  Booking Reference: <strong className="text-brand-navy">{selectedBooking.reference || '—'}</strong>
+                </span>
+                <span>
+                  Created on: {selectedBooking.created_at ? new Date(selectedBooking.created_at).toLocaleString('en-US', {
+                    dateStyle: 'medium',
+                    timeStyle: 'short'
+                  }) : '—'}
+                </span>
+              </div>
+            )}
 
             <form onSubmit={handleSubmit} className="space-y-5">
               <div>
