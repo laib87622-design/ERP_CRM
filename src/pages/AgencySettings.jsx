@@ -285,6 +285,7 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
   const [commissionSummary, setCommissionSummary] = useState({ pending: 0, ready: 0, paid: 0 });
   const [financialAccounts, setFinancialAccounts] = useState([]);
   const [payoutAccountIds, setPayoutAccountIds] = useState({});
+  const [isProcessing, setIsProcessing] = useState(false);
   const [expandedCommissionCards, setExpandedCommissionCards] = useState({});
   const [inviteForm, setInviteForm] = useState({
     full_name: '',
@@ -415,26 +416,22 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
       try {
         setCommissionPayoutsLoading(true);
 
-        const [{ data: allCommissionData, error: allError }, { data: readyCommissionData, error: readyError }, { data: accountData, error: accountError }] = await Promise.all([
-          supabase
-            .from('agent_commissions')
-            .select('*')
-            .order('created_at', { ascending: false }),
+        const [{ data: readyCommissionData, error: readyError }, { data: allStatusData, error: allStatusError }, { data: accountData, error: accountError }] = await Promise.all([
           supabase
             .from('agent_commissions')
             .select('*')
             .eq('status', 'READY_TO_PAY')
             .order('created_at', { ascending: false }),
+          supabase
+            .from('agent_commissions')
+            .select('status')
+            .order('created_at', { ascending: false }),
           supabase.from('financial_accounts').select('id, label, current_balance').order('label', { ascending: true })
         ]);
 
+        if (readyError) throw readyError;
+        if (allStatusError) throw allStatusError;
         if (accountError) throw accountError;
-
-        const normalizedAgentRows = (allCommissionData || []).map((row) => ({
-          ...row,
-          target_type: row.target_type || 'agent',
-          notes: row.notes || `Commission payout - ${row.agent_id || 'agent'}`,
-        }));
 
         const normalizedReadyRows = (readyCommissionData || []).map((row) => ({
           ...row,
@@ -442,11 +439,17 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
           notes: row.notes || `Commission payout - ${row.agent_id || 'agent'}`,
         }));
 
-        setCommissionPayouts(normalizedReadyRows.length > 0 ? normalizedReadyRows : normalizedAgentRows.filter((row) => row.status === 'READY_TO_PAY'));
+        const normalizedAllRows = (allStatusData || []).map((row) => ({
+          ...row,
+          target_type: row.target_type || 'agent',
+          notes: row.notes || `Commission payout - ${row.agent_id || 'agent'}`,
+        }));
+
+        setCommissionPayouts(normalizedReadyRows);
         setCommissionSummary({
-          pending: normalizedAgentRows.filter((row) => row.status === 'PENDING_PAYMENT').length,
-          ready: normalizedReadyRows.length || normalizedAgentRows.filter((row) => row.status === 'READY_TO_PAY').length,
-          paid: normalizedAgentRows.filter((row) => row.status === 'PAID').length,
+          pending: normalizedAllRows.filter((row) => row.status === 'PENDING_PAYMENT').length,
+          ready: normalizedAllRows.filter((row) => row.status === 'READY_TO_PAY').length,
+          paid: normalizedAllRows.filter((row) => row.status === 'PAID').length,
         });
         setFinancialAccounts(accountData || []);
         setPayoutAccountIds((prev) => {
@@ -534,11 +537,12 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
   const filteredCommissionPayouts = useMemo(() => {
     const query = commissionSearch.trim().toLowerCase();
     return (commissionPayouts || []).filter((row) => {
+      const status = String(row.status || '').toLowerCase();
       const matchesFilter =
         commissionPayoutFilter === 'all' ||
-        (commissionPayoutFilter === 'paid' && row.status === 'paid') ||
-        (commissionPayoutFilter === 'pending' && row.status === 'pending') ||
-        (commissionPayoutFilter === 'cancelled' && row.status === 'cancelled');
+        (commissionPayoutFilter === 'paid' && status === 'paid') ||
+        (commissionPayoutFilter === 'pending' && status === 'pending') ||
+        (commissionPayoutFilter === 'cancelled' && status === 'cancelled');
 
       const matchesQuery =
         !query ||
@@ -728,8 +732,26 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
       return;
     }
 
+    setIsProcessing(true);
+
     try {
       setError('');
+
+      const { data: checkComm, error: checkError } = await supabase
+        .from('agent_commissions')
+        .select('status')
+        .eq('id', commissionRow.id)
+        .single();
+
+      if (checkError && checkError.code !== 'PGRST116') {
+        throw checkError;
+      }
+
+      if (checkComm?.status === 'PAID') {
+        alert('This commission has already been paid!');
+        return;
+      }
+
       const { data: userData } = await supabase.auth.getUser();
 
       const { error: ledgerError } = await supabase.from('bank_entries').insert([
@@ -764,9 +786,9 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
       if (accountUpdateError) throw accountUpdateError;
 
       const { error: payoutUpdateError } = await supabase
-        .from('commission_payments')
+        .from('agent_commissions')
         .update({
-          status: 'paid',
+          status: 'PAID',
           paid_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         })
@@ -775,7 +797,7 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
       if (payoutUpdateError) throw payoutUpdateError;
 
       const refreshed = await supabase
-        .from('commission_payments')
+        .from('agent_commissions')
         .select('*')
         .order('created_at', { ascending: false });
 
@@ -786,6 +808,8 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
       setToast('Commission paid and ledger updated.');
     } catch (err) {
       setError(err.message || 'Unable to process commission payout.');
+    } finally {
+      setIsProcessing(false);
     }
   };
 
@@ -1139,58 +1163,62 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
             </div>
           ) : (
             <div className="space-y-3">
-              {filteredCommissionPayouts.map((row) => (
-                <div key={row.id} className="rounded-2xl border border-slate-200 bg-brand-surface p-4 shadow-sm">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h4 className="font-semibold text-brand-navy">{row.notes || row.target_type || 'Commission payout'}</h4>
-                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${row.status === 'paid' ? 'bg-emerald-100 text-emerald-700' : row.status === 'pending' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
-                          {row.status}
-                        </span>
-                      </div>
-                      <p className="mt-1 text-xs text-slate-500">
-                        {row.target_type || 'service'} • {row.invoice_id ? `Invoice ${row.invoice_id}` : 'Manual commission'}
-                      </p>
-                    </div>
+              {filteredCommissionPayouts.map((row) => {
+                const payoutStatus = String(row.status || '').toLowerCase();
 
-                    <div className="flex items-center gap-3">
-                      <div className="text-right">
-                        <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Amount</p>
-                        <p className="mt-1 font-mono text-lg font-semibold text-brand-navy">{Number(row.amount || 0).toFixed(2)} DA</p>
+                return (
+                  <div key={row.id} className="rounded-2xl border border-slate-200 bg-brand-surface p-4 shadow-sm">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="font-semibold text-brand-navy">{row.notes || row.target_type || 'Commission payout'}</h4>
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${payoutStatus === 'paid' ? 'bg-emerald-100 text-emerald-700' : payoutStatus === 'pending' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
+                            {row.status}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {row.target_type || 'service'} • {row.invoice_id ? `Invoice ${row.invoice_id}` : 'Manual commission'}
+                        </p>
                       </div>
 
-                      <select
-                        value={payoutAccountIds[row.id] || ''}
-                        onChange={(event) =>
-                          setPayoutAccountIds((prev) => ({
-                            ...prev,
-                            [row.id]: event.target.value,
-                          }))
-                        }
-                        className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-brand-navy outline-none focus:border-brand-gold"
-                        aria-label={commissionText.accountSelect}
-                      >
-                        <option value="">{commissionText.accountSelect}</option>
-                        {(financialAccounts || []).map((account) => (
-                          <option key={account.id} value={account.id}>
-                            {account.label}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="flex items-center gap-3">
+                        <div className="text-right">
+                          <p className="text-[10px] uppercase tracking-[0.14em] text-slate-500">Amount</p>
+                          <p className="mt-1 font-mono text-lg font-semibold text-brand-navy">{Number(row.amount || 0).toFixed(2)} DA</p>
+                        </div>
 
-                      <button
-                        type="button"
-                        className="rounded-xl bg-brand-gold px-3 py-2 text-xs font-bold text-brand-navy disabled:opacity-50"
-                        onClick={() => processCommissionPayout(row)}
-                        disabled={row.status === 'paid'}
-                      >
-                        {row.status === 'paid' ? commissionText.paidLabel : commissionText.payNow}
-                      </button>
+                        <select
+                          value={payoutAccountIds[row.id] || ''}
+                          onChange={(event) =>
+                            setPayoutAccountIds((prev) => ({
+                              ...prev,
+                              [row.id]: event.target.value,
+                            }))
+                          }
+                          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-brand-navy outline-none focus:border-brand-gold"
+                          aria-label={commissionText.accountSelect}
+                        >
+                          <option value="">{commissionText.accountSelect}</option>
+                          {(financialAccounts || []).map((account) => (
+                            <option key={account.id} value={account.id}>
+                              {account.label}
+                            </option>
+                          ))}
+                        </select>
+
+                        <button
+                          type="button"
+                          className="rounded-xl bg-brand-gold px-3 py-2 text-xs font-bold text-brand-navy disabled:opacity-50"
+                          onClick={() => processCommissionPayout(row)}
+                          disabled={payoutStatus === 'paid' || isProcessing}
+                        >
+                          {payoutStatus === 'paid' ? commissionText.paidLabel : isProcessing ? 'Processing...' : commissionText.payNow}
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
