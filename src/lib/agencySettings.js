@@ -109,6 +109,142 @@ export const calculateCommissionAmount = (typeKey, profitAmount, settings = null
   return Number(((profit * Number(rule.percentage || 0)) / 100).toFixed(2));
 };
 
+export const normalizeCommissionRuleKey = (value = '') =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/-/g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9_]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .replace(/_{2,}/g, '_') || 'custom_service';
+
+export const calculateCommissionPreview = (items = [], commissionRules = {}) => {
+  const normalizedRules = normalizeCommissionRules(commissionRules);
+  const preview = [];
+  let totalCommission = 0;
+
+  for (const item of items || []) {
+    if (!item || !item.name) continue;
+
+    const ruleKey = normalizeCommissionRuleKey(item.name);
+    const rule = normalizedRules[ruleKey];
+
+    if (!rule || rule.enabled !== true) {
+      preview.push({
+        name: item.name,
+        ruleKey,
+        matchedRule: null,
+        sellingPrice: Number(item.sellingPrice || 0),
+        costPrice: Number(item.costPrice || 0),
+        method: null,
+        basis: 0,
+        amount: 0,
+        reason: 'No enabled commission rule matched',
+      });
+      continue;
+    }
+
+    const sellingPrice = Number(item.sellingPrice || 0);
+    const costPrice = Number(item.costPrice || 0);
+    const profit = Math.max(sellingPrice - costPrice, 0);
+
+    let amount = 0;
+    let basis = 0;
+    let method = rule.method || 'percentage';
+
+    if (rule.method === 'percentage') {
+      basis = Number(((profit * Number(rule.percentage || 0)) / 100).toFixed(2));
+      amount = basis;
+    } else if (rule.method === 'amount') {
+      basis = Number(rule.amount || 0);
+      amount = basis;
+    }
+
+    totalCommission += amount;
+
+    preview.push({
+      name: item.name,
+      ruleKey,
+      matchedRule: ruleKey,
+      sellingPrice,
+      costPrice,
+      method,
+      basis,
+      amount,
+      reason: 'Matched enabled rule',
+    });
+  }
+
+  return {
+    totalCommission: Number(totalCommission.toFixed(2)),
+    items: preview,
+  };
+};
+
+export async function calculateAndInsertCommission(bookingId, agentId, items = []) {
+  if (!bookingId || !agentId || !Array.isArray(items) || items.length === 0) {
+    return 0;
+  }
+
+  const settings = await fetchAgencySettings();
+  const preview = calculateCommissionPreview(items, settings.commission_rules || {});
+
+  if (preview.totalCommission <= 0) {
+    return 0;
+  }
+
+  const { data: existingRow, error: existingError } = await supabase
+    .from('agent_commissions')
+    .select('id, amount')
+    .eq('booking_id', bookingId)
+    .eq('agent_id', agentId)
+    .is('invoice_id', null)
+    .maybeSingle();
+
+  if (existingError) {
+    throw existingError;
+  }
+
+  if (existingRow?.id) {
+    const { data: updatedRow, error: updateError } = await supabase
+      .from('agent_commissions')
+      .update({
+        amount: preview.totalCommission,
+        status: 'PENDING_PAYMENT',
+        notes: 'Auto-created from booking items',
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', existingRow.id)
+      .select()
+      .single();
+
+    if (updateError) throw updateError;
+    return Number(updatedRow?.amount ?? preview.totalCommission);
+  }
+
+  const { data: insertedRow, error: insertError } = await supabase
+    .from('agent_commissions')
+    .insert([
+      {
+        agent_id: agentId,
+        booking_id: bookingId,
+        invoice_id: null,
+        amount: preview.totalCommission,
+        status: 'PENDING_PAYMENT',
+        notes: 'Auto-created from booking items',
+      },
+    ])
+    .select()
+    .single();
+
+  if (insertError) {
+    throw insertError;
+  }
+
+  return Number(insertedRow?.amount ?? preview.totalCommission);
+}
+
 export const defaultAgencySettings = {
   id: null,
   agency_name: 'AIRVOY',
