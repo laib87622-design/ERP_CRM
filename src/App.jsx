@@ -31,7 +31,6 @@ import SupplierDetail from './pages/SupplierDetail';
 import Suppliers from './pages/Suppliers';
 import TaskDetail from './pages/TaskDetail';
 import Tasks from './pages/Tasks';
-import TreasuryReconciliation from './pages/TreasuryReconciliation';
 import { supabase } from './lib/supabase';
 
 const labels = {
@@ -572,7 +571,6 @@ function App() {
               <Route path="/bank/miscellaneous-payment" element={<MiscellaneousPayment language={language} />} />
               <Route path="/bank/accounts/:accountId" element={<FinancialAccountDetail language={language} />} />
               <Route path="/cash-flow" element={<CashFlowReport language={language} ui={ui} />} />
-              <Route path="/reconciliation" element={<TreasuryReconciliation language={language} ui={ui} />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </main>
