@@ -300,6 +300,7 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
     role: 'sales_agent',
     base_salary: 0,
   });
+  const [password, setPassword] = useState('');
   const [submittingInvite, setSubmittingInvite] = useState(false);
   const [toast, setToast] = useState('');
 
@@ -464,7 +465,7 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
             .order('created_at', { ascending: false }),
           supabase
             .from('agent_commissions')
-            .select('status')
+            .select('*')
             .order('created_at', { ascending: false }),
           supabase.from('financial_accounts').select('id, label, current_balance').order('label', { ascending: true })
         ]);
@@ -477,12 +478,18 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
           ...row,
           target_type: row.target_type || 'agent',
           notes: row.notes || `Commission payout - ${row.agent_id || 'agent'}`,
+          agent_name: 'Unknown Agent',
+          invoice_reference: 'N/A',
+          account_label: '—',
         }));
 
         const normalizedAllRows = (allStatusData || []).map((row) => ({
           ...row,
           target_type: row.target_type || 'agent',
           notes: row.notes || `Commission payout - ${row.agent_id || 'agent'}`,
+          agent_name: 'Unknown Agent',
+          invoice_reference: 'N/A',
+          account_label: '—',
         }));
 
         const paidRows = normalizedAllRows.filter((row) => row.status === 'PAID');
@@ -541,15 +548,19 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
           });
 
           const paymentAmount = Number(matchingEntry?.debit || matchingEntry?.credit || row.amount || 0);
-          const invoiceLabel = normalizeInvoiceReference(invoiceReferenceMap[row.invoice_id] || row.invoice_id || 'Manual commission');
+          const joinedAgentName = agentNameMap[row.agent_id] || 'Unknown Agent';
+          const joinedInvoiceNumber = invoiceReferenceMap[row.invoice_id] || 'N/A';
+          const invoiceLabel = normalizeInvoiceReference(joinedInvoiceNumber === 'N/A' ? 'Manual commission' : `INV-${joinedInvoiceNumber}`);
+          const paymentAccount = matchingEntry ? accountMatchMap[matchingEntry.id] || 'Account' : '—';
 
           return {
             ...row,
             amount: paymentAmount,
             invoice_reference: invoiceLabel,
-            agent_name: agentNameMap[row.agent_id] || 'Agent',
-            payment_account: matchingEntry ? accountMatchMap[matchingEntry.id] || 'Account' : '—',
+            agent_name: joinedAgentName,
+            payment_account: paymentAccount,
             amount_display: formatCommissionAmount(paymentAmount),
+            payment_date: row.paid_at ? new Date(row.paid_at).toLocaleDateString(language === 'ar' ? 'ar-DZ' : 'en-GB') : '—',
           };
         });
 
@@ -669,12 +680,13 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
   const paidHistoryRows = useMemo(() => {
     return (paidCommissionHistory || []).map((row) => ({
       ...row,
+      agent_name: row.agent_name || 'Unknown Agent',
       payment_account: row.payment_account || '—',
       payment_date: row.paid_at ? new Date(row.paid_at).toLocaleString(language === 'ar' ? 'ar-DZ' : 'en-GB', {
         dateStyle: 'medium',
         timeStyle: 'short',
       }) : '—',
-      invoice_reference: getCommissionInvoiceLabel(row),
+      invoice_reference: row.invoice_reference || getCommissionInvoiceLabel(row),
       amount_display: formatCommissionAmount(row.amount ?? row.total_amount ?? 0),
       status_display: row.status || 'PAID',
     }));
@@ -1021,35 +1033,38 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
 
   const handleSendInvite = async (event) => {
     event.preventDefault();
-    if (!inviteForm.full_name.trim() || !inviteForm.email.trim()) return;
+
+    if (!inviteForm.full_name.trim() || !inviteForm.email.trim() || !password.trim()) {
+      alert('Please fill all required fields.');
+      return;
+    }
 
     setSubmittingInvite(true);
 
     try {
-      const normalizedSalary = Number(inviteForm.base_salary || 0);
+      const payload = {
+        email: inviteForm.email.trim(),
+        password,
+        full_name: inviteForm.full_name.trim(),
+        role: inviteForm.role,
+        base_salary: Number(inviteForm.base_salary || 0),
+      };
 
-      if (supabase && inviteForm.email.trim()) {
-        const { data: existingProfile, error: lookupError } = await supabase
-          .from('profiles')
-          .select('id')
-          .ilike('email', inviteForm.email.trim())
-          .maybeSingle();
+      const { data, error } = await supabase.functions.invoke('manage-user', {
+        body: payload,
+      });
 
-        if (!lookupError && existingProfile?.id) {
-          const { error: salaryError } = await supabase
-            .from('profiles')
-            .update({ base_salary: normalizedSalary })
-            .eq('id', existingProfile.id);
-
-          if (salaryError) throw salaryError;
-        }
+      if (error || data?.error) {
+        throw new Error(error?.message || data?.error || 'Unable to create user.');
       }
 
-      setToast(t.successInvite);
+      setToast('User created successfully!');
       setInviteForm({ full_name: '', email: '', role: 'sales_agent', base_salary: 0 });
+      setPassword('');
       await loadTeamMembers();
     } catch (err) {
-      setError(err.message || 'Unable to save salary for this agent.');
+      setError(err.message || 'Unable to create user.');
+      alert(`Error: ${err.message || 'Unable to create user.'}`);
     } finally {
       setSubmittingInvite(false);
     }
@@ -1452,8 +1467,8 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
               <h3 className="text-lg font-semibold text-brand-navy">{t.inviteTitle}</h3>
             </div>
 
-            <form onSubmit={handleSendInvite} className="grid gap-4 md:grid-cols-3">
-              <label className="block text-sm text-brand-navy md:col-span-1">
+            <form onSubmit={handleSendInvite} className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <label className="block text-sm text-brand-navy">
                 <span className="mb-1 block font-medium">{t.fullName}</span>
                 <input
                   type="text"
@@ -1463,7 +1478,7 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
                 />
               </label>
 
-              <label className="block text-sm text-brand-navy md:col-span-1">
+              <label className="block text-sm text-brand-navy">
                 <span className="mb-1 block font-medium">{t.email}</span>
                 <input
                   type="email"
@@ -1473,19 +1488,17 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
                 />
               </label>
 
-              <label className="block text-sm text-brand-navy md:col-span-1">
-                <span className="mb-1 block font-medium">{commissionText.monthlySalary}</span>
+              <label className="block text-sm text-brand-navy">
+                <span className="mb-1 block font-medium">Password</span>
                 <input
-                  type="number"
-                  min="0"
-                  step="100"
-                  value={inviteForm.base_salary}
-                  onChange={(event) => setInviteForm((prev) => ({ ...prev, base_salary: Number(event.target.value || 0) }))}
+                  type="password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-brand-gold"
                 />
               </label>
 
-              <label className="block text-sm text-brand-navy md:col-span-1">
+              <label className="block text-sm text-brand-navy">
                 <span className="mb-1 block font-medium">{t.role}</span>
                 <select
                   value={inviteForm.role}
@@ -1500,10 +1513,22 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
                 </select>
               </label>
 
-              <div className="md:col-span-3 flex justify-end">
+              <label className="block text-sm text-brand-navy md:col-span-2 xl:col-span-1">
+                <span className="mb-1 block font-medium">{commissionText.monthlySalary}</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="100"
+                  value={inviteForm.base_salary}
+                  onChange={(event) => setInviteForm((prev) => ({ ...prev, base_salary: Number(event.target.value || 0) }))}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-brand-gold"
+                />
+              </label>
+
+              <div className="md:col-span-2 xl:col-span-4 flex justify-end">
                 <button
                   type="submit"
-                  disabled={submittingInvite || !inviteForm.full_name.trim() || !inviteForm.email.trim()}
+                  disabled={submittingInvite || !inviteForm.full_name.trim() || !inviteForm.email.trim() || !password.trim()}
                   className="rounded-xl bg-brand-gold px-4 py-2.5 text-sm font-bold text-brand-navy disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {submittingInvite ? commissionText.sending : t.sendInvite}

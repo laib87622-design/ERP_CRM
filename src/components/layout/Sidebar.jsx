@@ -188,7 +188,7 @@ export default function Sidebar({ isOpen, ui, isDarkMode, language = 'en' }) {
       </div>
 
       <nav className="flex-1 overflow-hidden py-2">
-        <div className="space-y-2 px-2.5">
+        <div className="h-full space-y-2 overflow-y-auto px-2.5 pb-24 scrollbar-hide">
           {topSections.map((section) => (
             <div key={section.label}>
               {section.label && (

@@ -32,9 +32,19 @@ export default function ProposalBuilder({ request_id }) {
   const [proposal, setProposal] = useState(emptyProposal);
   const [checklist, setChecklist] = useState([]);
   const [inclusions, setInclusions] = useState([]);
+  const [destinations, setDestinations] = useState([]);
+  const [visas, setVisas] = useState([]);
+  const [transportations, setTransportations] = useState([]);
+  const [accommodations, setAccommodations] = useState([]);
+  const [assurances, setAssurances] = useState([]);
   const [enabledFields, setEnabledFields] = useState(defaultEnabledFields);
   const [checklistInput, setChecklistInput] = useState('');
   const [inclusionInput, setInclusionInput] = useState('');
+  const [destinationInput, setDestinationInput] = useState('');
+  const [visaInput, setVisaInput] = useState('');
+  const [transportationInput, setTransportationInput] = useState('');
+  const [accommodationInput, setAccommodationInput] = useState('');
+  const [assuranceInput, setAssuranceInput] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
@@ -73,6 +83,21 @@ export default function ProposalBuilder({ request_id }) {
 
         setRequest(requestRes.data || null);
 
+        const normalizeListValue = (value) => {
+          if (Array.isArray(value)) {
+            return value.map((item) => String(item).trim()).filter(Boolean);
+          }
+
+          if (typeof value === 'string') {
+            return value
+              .split(',')
+              .map((item) => item.trim())
+              .filter(Boolean);
+          }
+
+          return [];
+        };
+
         const loadedChecklist = Array.isArray(proposalRes.data?.requirement_check_list)
           ? proposalRes.data.requirement_check_list
           : Array.isArray(proposalRes.data?.requirement_checklist)
@@ -101,6 +126,11 @@ export default function ProposalBuilder({ request_id }) {
           });
           setChecklist(loadedChecklist.length ? loadedChecklist : []);
           setInclusions(loadedInclusions.length ? loadedInclusions : []);
+          setDestinations(normalizeListValue(proposalRes.data.destination || requestRes.data?.destination));
+          setVisas(normalizeListValue(proposalRes.data.visa));
+          setTransportations(normalizeListValue(proposalRes.data.transportation));
+          setAccommodations(normalizeListValue(proposalRes.data.accommodation));
+          setAssurances(normalizeListValue(proposalRes.data.assurance));
           setEnabledFields(loadedEnabledFields);
         } else {
           setProposal((prev) => ({
@@ -110,6 +140,11 @@ export default function ProposalBuilder({ request_id }) {
           }));
           setChecklist([]);
           setInclusions([]);
+          setDestinations(normalizeListValue(requestRes.data?.destination));
+          setVisas([]);
+          setTransportations([]);
+          setAccommodations([]);
+          setAssurances([]);
           setEnabledFields(defaultEnabledFields);
         }
       } catch (err) {
@@ -124,6 +159,17 @@ export default function ProposalBuilder({ request_id }) {
 
   const updateField = (field, value) => {
     setProposal((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const addListItem = (fieldKey, value, setItems) => {
+    const trimmed = String(value || '').trim();
+    if (!trimmed) return;
+
+    setItems((prev) => [...prev, trimmed]);
+  };
+
+  const removeListItem = (fieldKey, index, setItems) => {
+    setItems((prev) => prev.filter((_, itemIndex) => itemIndex !== index));
   };
 
   const addChecklistItem = () => {
@@ -177,11 +223,11 @@ export default function ProposalBuilder({ request_id }) {
       const payload = {
         request_id: resolvedRequestId,
         requirement_check_list: checklist,
-        destination: proposal.destination,
-        visa: proposal.visa,
-        transportation: proposal.transportation,
-        accommodation: proposal.accommodation,
-        assurance: proposal.assurance,
+        destination: destinations,
+        visa: visas,
+        transportation: transportations,
+        accommodation: accommodations,
+        assurance: assurances,
         add_inclusions: inclusions,
         total_price: proposal.total_price === '' ? null : Number(proposal.total_price),
         enabled_fields: enabledFields,
@@ -340,13 +386,13 @@ export default function ProposalBuilder({ request_id }) {
 
           <div className="grid gap-4 md:grid-cols-2">
             {[
-              { key: 'destination', label: 'Destination', value: proposal.destination, onChange: (event) => updateField('destination', event.target.value) },
-              { key: 'visa', label: 'Visa', value: proposal.visa, onChange: (event) => updateField('visa', event.target.value) },
-              { key: 'transportation', label: 'Transportation', value: proposal.transportation, onChange: (event) => updateField('transportation', event.target.value) },
-              { key: 'accommodation', label: 'Accommodation', value: proposal.accommodation, onChange: (event) => updateField('accommodation', event.target.value) },
-            ].map(({ key, label, value, onChange }) => (
-              <label key={key} className="block space-y-2 text-sm font-medium text-slate-700">
-                <span className="flex items-center justify-between gap-2">
+              { key: 'destination', label: 'Destination', items: destinations, setItems: setDestinations, input: destinationInput, setInput: setDestinationInput },
+              { key: 'visa', label: 'Visa', items: visas, setItems: setVisas, input: visaInput, setInput: setVisaInput },
+              { key: 'transportation', label: 'Transportation', items: transportations, setItems: setTransportations, input: transportationInput, setInput: setTransportationInput },
+              { key: 'accommodation', label: 'Accommodation', items: accommodations, setItems: setAccommodations, input: accommodationInput, setInput: setAccommodationInput },
+            ].map(({ key, label, items, setItems, input, setInput }) => (
+              <div key={key} className="space-y-2 text-sm font-medium text-slate-700">
+                <div className="flex items-center justify-between gap-2">
                   <span>{label}</span>
                   <label className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
                     <input
@@ -357,18 +403,58 @@ export default function ProposalBuilder({ request_id }) {
                     />
                     On
                   </label>
-                </span>
-                <input
-                  value={value}
-                  onChange={onChange}
-                  disabled={!enabledFields[key]}
-                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 outline-none transition focus:border-brand-gold focus:bg-white disabled:cursor-not-allowed disabled:opacity-50"
-                />
-              </label>
+                </div>
+
+                {enabledFields[key] && (
+                  <>
+                    <div className="flex gap-2">
+                      <input
+                        value={input}
+                        onChange={(event) => setInput(event.target.value)}
+                        className="flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 outline-none transition focus:border-brand-gold focus:bg-white"
+                        placeholder={`Add ${label.toLowerCase()}`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const trimmed = String(input || '').trim();
+                          if (!trimmed) return;
+                          setItems((prev) => [...prev, trimmed]);
+                          setInput('');
+                        }}
+                        className="rounded-xl bg-brand-navy px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-gold hover:text-brand-navy"
+                      >
+                        Add
+                      </button>
+                    </div>
+
+                    <div className="space-y-2">
+                      {items.length === 0 ? (
+                        <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
+                          No {label.toLowerCase()} items added.
+                        </div>
+                      ) : (
+                        items.map((item, idx) => (
+                          <div key={`${item}-${idx}`} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2">
+                            <span className="text-slate-700">{item}</span>
+                            <button
+                              type="button"
+                              onClick={() => setItems((prev) => prev.filter((_, itemIndex) => itemIndex !== idx))}
+                              className="text-xs font-semibold text-red-600 transition hover:text-red-700"
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </>
+                )}
+              </div>
             ))}
 
-            <label className="block space-y-2 text-sm font-medium text-slate-700 md:col-span-2">
-              <span className="flex items-center justify-between gap-2">
+            <div className="space-y-2 text-sm font-medium text-slate-700 md:col-span-2">
+              <div className="flex items-center justify-between gap-2">
                 <span>Assurance</span>
                 <label className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
                   <input
@@ -379,14 +465,54 @@ export default function ProposalBuilder({ request_id }) {
                   />
                   On
                 </label>
-              </span>
-              <input
-                value={proposal.assurance}
-                onChange={(event) => updateField('assurance', event.target.value)}
-                disabled={!enabledFields.assurance}
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 outline-none transition focus:border-brand-gold focus:bg-white disabled:cursor-not-allowed disabled:opacity-50"
-              />
-            </label>
+              </div>
+
+              {enabledFields.assurance && (
+                <>
+                  <div className="flex gap-2">
+                    <input
+                      value={assuranceInput}
+                      onChange={(event) => setAssuranceInput(event.target.value)}
+                      className="flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 outline-none transition focus:border-brand-gold focus:bg-white"
+                      placeholder="Add assurance"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const trimmed = String(assuranceInput || '').trim();
+                        if (!trimmed) return;
+                        setAssurances((prev) => [...prev, trimmed]);
+                        setAssuranceInput('');
+                      }}
+                      className="rounded-xl bg-brand-navy px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-brand-gold hover:text-brand-navy"
+                    >
+                      Add
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    {assurances.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
+                        No assurance items added.
+                      </div>
+                    ) : (
+                      assurances.map((item, idx) => (
+                        <div key={`${item}-${idx}`} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2">
+                          <span className="text-slate-700">{item}</span>
+                          <button
+                            type="button"
+                            onClick={() => setAssurances((prev) => prev.filter((_, itemIndex) => itemIndex !== idx))}
+                            className="text-xs font-semibold text-red-600 transition hover:text-red-700"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
           </div>
 
           <div className="space-y-3 text-sm font-medium text-slate-700">
@@ -501,17 +627,60 @@ export default function ProposalBuilder({ request_id }) {
                   <h3 className="text-lg font-semibold">Trip Overview</h3>
                 </div>
 
-                <div className="grid gap-4 md:grid-cols-2">
-                  {enabledFields.destination && proposal.destination ? <InfoRow label="Destination" value={proposal.destination} /> : null}
-                  {enabledFields.visa && proposal.visa ? <InfoRow label="Visa" value={proposal.visa} /> : null}
-                  {enabledFields.transportation && proposal.transportation ? <InfoRow label="Transportation" value={proposal.transportation} /> : null}
-                  {enabledFields.accommodation && proposal.accommodation ? <InfoRow label="Accommodation" value={proposal.accommodation} /> : null}
-                  {enabledFields.assurance && proposal.assurance ? <InfoRow label="Assurance" value={proposal.assurance} /> : null}
-                  <InfoRow label="Service Type" value={request?.service_type || '—'} />
+                <div className="mt-4 grid grid-cols-2 gap-4">
+                  {enabledFields.destination && destinations.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Destination</h4>
+                      <ul className="mt-1 list-disc pl-4 text-sm font-semibold text-slate-800">
+                        {destinations.map((item, idx) => <li key={`${item}-${idx}`}>{item}</li>)}
+                      </ul>
+                    </div>
+                  )}
+
+                  {enabledFields.visa && visas.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Visa</h4>
+                      <ul className="mt-1 list-disc pl-4 text-sm font-semibold text-slate-800">
+                        {visas.map((item, idx) => <li key={`${item}-${idx}`}>{item}</li>)}
+                      </ul>
+                    </div>
+                  )}
+
+                  {enabledFields.transportation && transportations.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Transportation</h4>
+                      <ul className="mt-1 list-disc pl-4 text-sm font-semibold text-slate-800">
+                        {transportations.map((item, idx) => <li key={`${item}-${idx}`}>{item}</li>)}
+                      </ul>
+                    </div>
+                  )}
+
+                  {enabledFields.accommodation && accommodations.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Accommodation</h4>
+                      <ul className="mt-1 list-disc pl-4 text-sm font-semibold text-slate-800">
+                        {accommodations.map((item, idx) => <li key={`${item}-${idx}`}>{item}</li>)}
+                      </ul>
+                    </div>
+                  )}
+
+                  {enabledFields.assurance && assurances.length > 0 && (
+                    <div>
+                      <h4 className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Assurance</h4>
+                      <ul className="mt-1 list-disc pl-4 text-sm font-semibold text-slate-800">
+                        {assurances.map((item, idx) => <li key={`${item}-${idx}`}>{item}</li>)}
+                      </ul>
+                    </div>
+                  )}
+
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Service Type</h4>
+                    <p className="mt-1 text-sm font-semibold text-slate-800">{request?.service_type || '—'}</p>
+                  </div>
                 </div>
               </div>
 
-              <div className="rounded-3xl border border-slate-200 bg-white p-4 print:hidden print:border-slate-200">
+              <div className="mt-6 rounded-3xl border border-slate-200 bg-white p-4 print:hidden print:border-slate-200">
                 <div className="mb-3 flex items-center gap-2 text-brand-navy">
                   <FileText size={16} />
                   <h3 className="text-lg font-semibold">Requirement Checklist</h3>
