@@ -67,14 +67,12 @@ export default function AssignClientWorkflow({ onAssigned, onCancel }) {
   );
 
   const assignJoinRecord = async (templateId, clientId) => {
-    const joinRow = { client_id: clientId, template_id: templateId };
+    const joinRow = { client_id: clientId, service_template_id: templateId };
+    const { error } = await supabase
+      .from('service_clients')
+      .upsert([joinRow], { onConflict: 'service_template_id,client_id' });
 
-    const { error: primaryError } = await supabase.from('service_clients').insert([joinRow]);
-    if (!primaryError) return;
-
-    const fallbackRow = { client_id: clientId, service_template_id: templateId };
-    const { error: fallbackError } = await supabase.from('service_clients').insert([fallbackRow]);
-    if (fallbackError) throw fallbackError;
+    if (error) throw error;
   };
 
   const assignWorkflow = async () => {
@@ -222,18 +220,7 @@ export default function AssignClientWorkflow({ onAssigned, onCancel }) {
         if (itemsInsertError) throw itemsInsertError;
       }
 
-      const joinPayload = {
-        client_id: selectedClient.id,
-        template_id: clonedTemplate.id,
-      };
-
-      try {
-        await assignJoinRecord(clonedTemplate.id, selectedClient.id);
-      } catch (joinError) {
-        const fallbackJoinPayload = { client_id: selectedClient.id, service_template_id: clonedTemplate.id };
-        const { error: fallbackJoinInsertError } = await supabase.from('client_services').insert([fallbackJoinPayload]);
-        if (fallbackJoinInsertError) throw fallbackJoinInsertError;
-      }
+      await assignJoinRecord(clonedTemplate.id, selectedClient.id);
 
       if (onAssigned) {
         onAssigned({

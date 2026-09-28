@@ -64,6 +64,9 @@ export default function Services({ language = 'en' }) {
   const [country, setCountry] = useState('');
   const [visaType, setVisaType] = useState('');
   const [status, setStatus] = useState('');
+  const [countryCustom, setCountryCustom] = useState('');
+  const [visaCustom, setVisaCustom] = useState('');
+  const [statusCustom, setStatusCustom] = useState('');
   const [filterCountry, setFilterCountry] = useState('All');
   const [filterVisa, setFilterVisa] = useState('All');
 
@@ -224,7 +227,34 @@ export default function Services({ language = 'en' }) {
     loadAll();
   }, []);
 
+  useEffect(() => {
+    const fetchMasterTemplates = async () => {
+      if (!supabase) return;
+
+      const { data, error } = await supabase
+        .from('service_templates')
+        .select('*')
+        .is('client_id', null);
+
+      if (error) {
+        console.error('Error fetching templates:', error);
+      } else if (data) {
+        setTemplates(data);
+      }
+    };
+
+    fetchMasterTemplates();
+  }, []);
+
   const selectedClientService = clientServices.find((row) => row.id === selectedClientServiceId) || null;
+
+  const uniqueCountries = [...new Set(templates.map((template) => template.country_id).filter(Boolean))];
+  const uniqueVisas = [...new Set(templates.map((template) => template.visa_type_id).filter(Boolean))];
+  const uniqueStatuses = [...new Set(templates.map((template) => template.professional_status).filter(Boolean))];
+
+  const matrixCountryOptions = uniqueCountries.length ? uniqueCountries : matrixOptions.country_id;
+  const matrixVisaOptions = uniqueVisas.length ? uniqueVisas : matrixOptions.visa_type_id;
+  const matrixStatusOptions = uniqueStatuses.length ? uniqueStatuses : matrixOptions.professional_status;
 
   const clientUniqueCountries = [...new Set(clientServices.map((row) => row.service_templates?.country_id).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const clientUniqueVisaTypes = [...new Set(clientServices.map((row) => row.service_templates?.visa_type_id).filter(Boolean))].sort((a, b) => a.localeCompare(b));
@@ -362,6 +392,15 @@ export default function Services({ language = 'en' }) {
         const { error: itemInsertError } = await supabase.from('service_items').insert(itemsToInsert);
         if (itemInsertError) throw itemInsertError;
       }
+
+      const { error: assignmentJoinError } = await supabase
+        .from('service_clients')
+        .upsert(
+          [{ client_id: client_id, service_template_id: newTemplate.id }],
+          { onConflict: 'service_template_id,client_id' }
+        );
+
+      if (assignmentJoinError) throw assignmentJoinError;
 
       await ensureClientService({ clientId: client_id, templateId: newTemplate.id });
 
@@ -551,10 +590,10 @@ export default function Services({ language = 'en' }) {
       setSaving(true);
       setError('');
 
-      const sourceTemplate = templateToCopy || null;
-      const countryValue = String(templateMatrix.country_id || sourceTemplate?.country_id || '').trim();
-      const visaValue = String(templateMatrix.visa_type_id || sourceTemplate?.visa_type_id || '').trim();
-      const professionalValue = String(templateMatrix.professional_status || sourceTemplate?.professional_status || '').trim();
+      const sourceTemplate = templateToCopy ? templates.find((template) => template.id === templateToCopy) || null : null;
+      const countryValue = String(country || templateMatrix.country_id || sourceTemplate?.country_id || '').trim();
+      const visaValue = String(visaType || templateMatrix.visa_type_id || sourceTemplate?.visa_type_id || '').trim();
+      const professionalValue = String(status || templateMatrix.professional_status || sourceTemplate?.professional_status || '').trim();
 
       if (!countryValue || !visaValue || !professionalValue) {
         setError('Country, visa type, and professional status are required before saving the master template matrix.');
@@ -573,7 +612,7 @@ export default function Services({ language = 'en' }) {
       }
 
       const payload = sanitizeTemplateMatrixPayload({
-        title: draftTemplateName.trim() || sourceTemplate?.title || 'New Template',
+        title: draftTemplateName.trim() || sourceTemplate?.title || `${countryValue} - ${visaValue} - ${professionalValue}`,
         country_id: countryValue,
         visa_type_id: visaValue,
         professional_status: professionalValue,
@@ -666,7 +705,7 @@ export default function Services({ language = 'en' }) {
       }
 
       const nextTemplate = { ...newTemplate, packageName: '—' };
-      setTemplates((prev) => [...prev, nextTemplate].sort((a, b) => a.title.localeCompare(b.title)));
+      setTemplates((prev) => [...prev, nextTemplate].sort((a, b) => String(a.title || '').localeCompare(String(b.title || ''))));
       setSelectedTemplateId(newTemplate.id);
       setActiveTemplate(nextTemplate);
       setDraftTemplateName(newTemplate.title);
@@ -675,7 +714,10 @@ export default function Services({ language = 'en' }) {
         visa_type_id: newTemplate.visa_type_id || '',
         professional_status: newTemplate.professional_status || '',
       });
-      setTemplateToCopy(null);
+      setCountry('');
+      setVisaType('');
+      setStatus('');
+      setTemplateToCopy('');
       setViewMode('edit');
       await loadTemplateMatrixOptions();
     } catch (err) {
@@ -1051,24 +1093,50 @@ export default function Services({ language = 'en' }) {
   });
 
   const handleSaveMatrix = async () => {
-    const nextMatrix = {
-      country_id: country.trim(),
-      visa_type_id: visaType.trim(),
-      professional_status: status.trim(),
-    };
-
-    if (!nextMatrix.country_id || !nextMatrix.visa_type_id || !nextMatrix.professional_status) {
-      setError('Country, visa type, and professional status are required.');
+    if (!country || !visaType || !status) {
+      setError('Country, visa type, and professional status are required before saving the master template matrix.');
       return;
     }
 
-    setTemplateMatrix(nextMatrix);
-    const previousCopy = templateToCopy;
-    if (previousCopy) {
-      setTemplateToCopy(previousCopy);
-    }
+    const payload = {
+      country_id: country.trim(),
+      visa_type_id: visaType.trim(),
+      professional_status: status.trim(),
+      title: `${country.trim()} - ${visaType.trim()} - ${status.trim()}`,
+      client_id: null,
+    };
 
-    await addTemplate();
+    try {
+      setSaving(true);
+      setError('');
+
+      const { data: newTemplate, error: insertError } = await supabase
+        .from('service_templates')
+        .insert([payload])
+        .select('*')
+        .single();
+
+      if (insertError) throw insertError;
+
+      setTemplates((prev) => [...prev, newTemplate].sort((a, b) => String(a.title || '').localeCompare(String(b.title || ''))));
+      setTemplateMatrix({
+        country_id: payload.country_id,
+        visa_type_id: payload.visa_type_id,
+        professional_status: payload.professional_status,
+      });
+      setSelectedTemplateId(newTemplate.id);
+      setActiveTemplate(newTemplate);
+      setCountry('');
+      setVisaType('');
+      setStatus('');
+      setTemplateToCopy('');
+      setViewMode('edit');
+      await loadTemplateMatrixOptions();
+    } catch (err) {
+      setError(err.message || 'Unable to save template matrix.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const matrixFields = [
@@ -1337,47 +1405,116 @@ export default function Services({ language = 'en' }) {
               <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Country</label>
-                  <input
-                    list="country-list"
-                    value={country}
-                    onChange={(e) => setCountry(e.target.value)}
+                  <select
+                    value={country || '__other__'}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value === '__other__') {
+                        setCountry('');
+                        setCountryCustom('');
+                        return;
+                      }
+                      setCountry(value);
+                      setCountryCustom(value);
+                    }}
                     className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-amber-400"
-                  />
-                  <datalist id="country-list">
-                    {(matrixOptions.country_id || []).map((option) => (
-                      <option key={option} value={option} />
+                  >
+                    <option value="">Select country</option>
+                    {matrixCountryOptions.map((value) => (
+                      <option key={value} value={value}>{value}</option>
                     ))}
-                  </datalist>
+                    <option value="__other__">Other...</option>
+                  </select>
+
+                  {country === '' && countryCustom === '' && (
+                    <input
+                      type="text"
+                      value={countryCustom}
+                      onChange={(e) => {
+                        const value = e.target.value.trim();
+                        setCountryCustom(value);
+                        setCountry(value);
+                      }}
+                      placeholder="Enter country name"
+                      className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-amber-400"
+                    />
+                  )}
                 </div>
 
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Visa Type</label>
-                  <input
-                    list="visa-list"
-                    value={visaType}
-                    onChange={(e) => setVisaType(e.target.value)}
+                  <select
+                    value={visaType || '__other__'}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value === '__other__') {
+                        setVisaType('');
+                        setVisaCustom('');
+                        return;
+                      }
+                      setVisaType(value);
+                      setVisaCustom(value);
+                    }}
                     className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-amber-400"
-                  />
-                  <datalist id="visa-list">
-                    {(matrixOptions.visa_type_id || []).map((option) => (
-                      <option key={option} value={option} />
+                  >
+                    <option value="">Select visa type</option>
+                    {matrixVisaOptions.map((value) => (
+                      <option key={value} value={value}>{value}</option>
                     ))}
-                  </datalist>
+                    <option value="__other__">Other...</option>
+                  </select>
+
+                  {visaType === '' && visaCustom === '' && (
+                    <input
+                      type="text"
+                      value={visaCustom}
+                      onChange={(e) => {
+                        const value = e.target.value.trim();
+                        setVisaCustom(value);
+                        setVisaType(value);
+                      }}
+                      placeholder="Enter visa type"
+                      className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-amber-400"
+                    />
+                  )}
                 </div>
 
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Professional Status</label>
-                  <input
-                    list="status-list"
-                    value={status}
-                    onChange={(e) => setStatus(e.target.value)}
+                  <select
+                    value={status || '__other__'}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      if (value === '__other__') {
+                        setStatus('');
+                        setStatusCustom('');
+                        return;
+                      }
+                      setStatus(value);
+                      setStatusCustom(value);
+                    }}
                     className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-amber-400"
-                  />
-                  <datalist id="status-list">
-                    {(matrixOptions.professional_status || []).map((option) => (
-                      <option key={option} value={option} />
+                  >
+                    <option value="">Select professional status</option>
+                    {matrixStatusOptions.map((value) => (
+                      <option key={value} value={value}>{value}</option>
                     ))}
-                  </datalist>
+                    <option value="__other__">Other...</option>
+                  </select>
+
+                  {status === '' && statusCustom === '' && (
+                    <input
+                      type="text"
+                      value={statusCustom}
+                      onChange={(e) => {
+                        const value = e.target.value.trim();
+                        setStatusCustom(value);
+                        setStatus(value);
+                      }}
+                      placeholder="Enter professional status"
+                      className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-amber-400"
+                    />
+                  )}
                 </div>
               </div>
 
@@ -1386,7 +1523,29 @@ export default function Services({ language = 'en' }) {
                   <label className="text-sm text-slate-600">Optional: Copy from existing template</label>
                   <select
                     value={templateToCopy}
-                    onChange={(e) => setTemplateToCopy(e.target.value)}
+                    onChange={(event) => {
+                      const selectedId = event.target.value;
+                      setTemplateToCopy(selectedId);
+
+                      if (!selectedId) {
+                        setCountry('');
+                        setVisaType('');
+                        setStatus('');
+                        return;
+                      }
+
+                      const selectedTemplateCopy = templates.find((template) => template.id === selectedId);
+                      if (selectedTemplateCopy) {
+                        setCountry(selectedTemplateCopy.country_id || '');
+                        setVisaType(selectedTemplateCopy.visa_type_id || '');
+                        setStatus(selectedTemplateCopy.professional_status || '');
+                        setTemplateMatrix({
+                          country_id: selectedTemplateCopy.country_id || '',
+                          visa_type_id: selectedTemplateCopy.visa_type_id || '',
+                          professional_status: selectedTemplateCopy.professional_status || '',
+                        });
+                      }
+                    }}
                     className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-amber-400"
                   >
                     <option value="">Start from scratch</option>
