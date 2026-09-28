@@ -99,3 +99,105 @@ export const markTaskDoneIfComplete = async ({ clientId, templateId, stagesData 
 
   if (error) throw error;
 };
+
+export const duplicateMasterTemplate = async (templateId) => {
+  if (!supabase || !templateId) return null;
+
+  const { data: masterTemplate, error: masterError } = await supabase
+    .from('service_templates')
+    .select('*')
+    .eq('id', templateId)
+    .single();
+
+  if (masterError) throw masterError;
+
+  const [stagesRes, stepsRes, itemsRes] = await Promise.all([
+    supabase
+      .from('service_stages')
+      .select('*')
+      .eq('service_template_id', templateId)
+      .order('sort_order', { ascending: true }),
+    supabase.from('service_steps').select('*').order('sort_order', { ascending: true }),
+    supabase.from('service_items').select('*').order('sort_order', { ascending: true }),
+  ]);
+
+  if (stagesRes.error) throw stagesRes.error;
+  if (stepsRes.error) throw stepsRes.error;
+  if (itemsRes.error) throw itemsRes.error;
+
+  const { id: _oldTemplateId, created_at: _createdAt, updated_at: _updatedAt, client_id: _clientId, ...templatePayload } = masterTemplate;
+  const copiedTitle = `${String(masterTemplate.title || 'Template').trim()} (Copy)`;
+
+  const { data: clonedTemplate, error: templateInsertError } = await supabase
+    .from('service_templates')
+    .insert([
+      {
+        ...templatePayload,
+        title: copiedTitle,
+        client_id: null,
+      },
+    ])
+    .select('*')
+    .single();
+
+  if (templateInsertError) throw templateInsertError;
+
+  const stageIdMap = {};
+  for (const stage of stagesRes.data || []) {
+    const { id: oldStageId, created_at: _stageCreatedAt, updated_at: _stageUpdatedAt, service_template_id: _ignoredTemplateId, ...stagePayload } = stage;
+
+    const { data: insertedStage, error: stageInsertError } = await supabase
+      .from('service_stages')
+      .insert([
+        {
+          ...stagePayload,
+          service_template_id: clonedTemplate.id,
+        },
+      ])
+      .select('id')
+      .single();
+
+    if (stageInsertError) throw stageInsertError;
+    stageIdMap[oldStageId] = insertedStage.id;
+  }
+
+  const stepIdMap = {};
+  for (const step of stepsRes.data || []) {
+    if (!stageIdMap[step.stage_id]) continue;
+
+    const { id: oldStepId, created_at: _stepCreatedAt, updated_at: _stepUpdatedAt, ...stepPayload } = step;
+
+    const { data: insertedStep, error: stepInsertError } = await supabase
+      .from('service_steps')
+      .insert([
+        {
+          ...stepPayload,
+          stage_id: stageIdMap[step.stage_id],
+        },
+      ])
+      .select('id')
+      .single();
+
+    if (stepInsertError) throw stepInsertError;
+    stepIdMap[oldStepId] = insertedStep.id;
+  }
+
+  for (const item of itemsRes.data || []) {
+    if (!stepIdMap[item.step_id]) continue;
+
+    const { id: _oldItemId, created_at: _itemCreatedAt, updated_at: _itemUpdatedAt, ...itemPayload } = item;
+
+    const { error: itemInsertError } = await supabase
+      .from('service_items')
+      .insert([
+        {
+          ...itemPayload,
+          step_id: stepIdMap[item.step_id],
+        },
+      ]);
+
+    if (itemInsertError) throw itemInsertError;
+  }
+
+  return clonedTemplate;
+};

@@ -313,26 +313,33 @@ export default function Invoices({ language = 'en' }) {
     }
   };
 
+  const normalizeUuidValue = (value) => {
+    if (value === undefined || value === null) return null;
+    const text = String(value).trim();
+    return text ? text : null;
+  };
+
   const recordInvoicePaymentInBanking = async (invoice, amountPaid, selectedAccountId, payerLabel = null) => {
-    if (!supabase || !selectedAccountId) return;
+    const safeSelectedAccountId = normalizeUuidValue(selectedAccountId);
+    if (!supabase || !safeSelectedAccountId) return;
 
     const normalizedAmount = Number(amountPaid || 0);
     if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) return;
 
-    const selectedAccount = (financialAccounts || []).find((account) => account.id === selectedAccountId);
+    const selectedAccount = (financialAccounts || []).find((account) => account.id === safeSelectedAccountId);
     const operationTypeLabel = selectedAccount ? selectedAccount.label : 'Direct Deduction';
     const { data: userData } = await supabase.auth.getUser();
 
     const { error: entryError } = await supabase.from('bank_entries').insert([
       {
-        account_id: selectedAccountId,
+        account_id: safeSelectedAccountId,
         operation_date: new Date().toISOString(),
         description: `Invoice Payment - ${invoice?.reference || invoice?.invoice_number || 'N/A'}`,
         operation_type: operationTypeLabel,
         third_party: payerLabel || invoice?.client_name || 'Customer',
         credit: normalizedAmount,
         debit: 0,
-        agent_id: userData?.user?.id || null,
+        agent_id: normalizeUuidValue(userData?.user?.id),
       },
     ]);
 
@@ -365,9 +372,9 @@ export default function Invoices({ language = 'en' }) {
 
     const selectedType = options.forceType || invoicePaymentTypes[invoice.id] || getInvoicePaymentType(invoice);
     const partialAmountRaw = Number(invoicePartialAmounts[invoice.id] ?? invoice.amount_paid ?? 0);
-    const selectedPayerId = selectedInvoicePayers[invoice.id] || invoice.client_id || null;
+    const selectedPayerId = normalizeUuidValue(selectedInvoicePayers[invoice.id] || invoice.client_id || null);
     const selectedPayerLabel = (invoicePayerOptions[invoice.id] || []).find((payer) => payer.id === selectedPayerId)?.label || invoice.client_name || 'Customer';
-    const selectedAccountId = selectedInvoiceAccountIds[invoice.id] || invoice.account_id || null;
+    const selectedAccountId = normalizeUuidValue(selectedInvoiceAccountIds[invoice.id] || invoice.account_id || null);
     const selectedAccount = (financialAccounts || []).find((account) => account.id === selectedAccountId) || null;
     const selectedPaymentMethod = invoicePaymentMethods[invoice.id] || invoice.payment_method || getPaymentMethodsForAccount(selectedAccount)[0] || 'cash';
     const normalizedPaymentMethod = normalizePaymentMethodValue(selectedPaymentMethod);
@@ -423,8 +430,8 @@ export default function Invoices({ language = 'en' }) {
         payment_type: fullPayment ? 'full' : 'partial',
         amount_paid: amountPaidValue,
         payment_method: normalizedPaymentMethod,
-        account_id: selectedAccountId,
-        agent_id: userData?.user?.id || null,
+        account_id: normalizeUuidValue(selectedAccountId),
+        agent_id: normalizeUuidValue(userData?.user?.id),
       };
 
       const { error: updateError } = await supabase.from('invoices').update(updatePayload).eq('id', invoice.id);

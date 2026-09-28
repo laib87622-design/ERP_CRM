@@ -14,7 +14,13 @@ import {
   Users,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { buildStagesDataFromTemplate, computeStagesProgress, ensureClientService, markTaskDoneIfComplete } from '../lib/serviceWorkflow';
+import {
+  buildStagesDataFromTemplate,
+  computeStagesProgress,
+  duplicateMasterTemplate,
+  ensureClientService,
+  markTaskDoneIfComplete,
+} from '../lib/serviceWorkflow';
 
 const createUniqueTemplateKey = () => {
   const stamp = Date.now().toString(36);
@@ -52,50 +58,79 @@ export default function Services({ language = 'en' }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'create' | 'edit'
+  const [activeTemplate, setActiveTemplate] = useState(null);
+  const [templateToCopy, setTemplateToCopy] = useState('');
+  const [country, setCountry] = useState('');
+  const [visaType, setVisaType] = useState('');
+  const [status, setStatus] = useState('');
+  const [filterCountry, setFilterCountry] = useState('All');
+  const [filterVisa, setFilterVisa] = useState('All');
 
   // Client services state
   const [clientServices, setClientServices] = useState([]);
   const [selectedClientServiceId, setSelectedClientServiceId] = useState(null);
+  const [countryFilter, setCountryFilter] = useState('All');
+  const [visaFilter, setVisaFilter] = useState('All');
   const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
-  const [assignForm, setAssignForm] = useState({ client_id: '', template_id: '' });
+  const [assignForm, setAssignForm] = useState({
+    client_id: '',
+    country_id: '',
+    visa_type_id: '',
+    professional_status: '',
+  });
 
   // Shared lookups
   const [clients, setClients] = useState([]);
   const [templates, setTemplates] = useState([]);
-  const [packages, setPackages] = useState([]);
+  const [assignMatrixOptions, setAssignMatrixOptions] = useState({
+    country_id: [],
+    visa_type_id: [],
+    professional_status: [],
+  });
 
   // Templates builder state
   const [selectedTemplateId, setSelectedTemplateId] = useState(null);
   const [workflow, setWorkflow] = useState([]);
+  const [templateMatrix, setTemplateMatrix] = useState({ country_id: '', visa_type_id: '', professional_status: '' });
+  const [matrixOptions, setMatrixOptions] = useState({ country_id: [], visa_type_id: [], professional_status: [] });
   const [editingTemplateName, setEditingTemplateName] = useState(false);
   const [draftTemplateName, setDraftTemplateName] = useState('');
   const [editingItemId, setEditingItemId] = useState(null);
   const [editingItemDraft, setEditingItemDraft] = useState('');
 
+  const normalizeUuidOrNull = (value) => {
+    if (value === undefined || value === null) return null;
+    const trimmed = String(value).trim();
+    return trimmed && trimmed !== 'null' && trimmed !== 'undefined' ? trimmed : null;
+  };
+
+  const sanitizeTemplateMatrixPayload = (source = {}) => ({
+    country_id: String(source.country_id ?? '').trim() || null,
+    visa_type_id: String(source.visa_type_id ?? '').trim() || null,
+    professional_status: String(source.professional_status ?? '').trim() || null,
+    client_id: normalizeUuidOrNull(source.client_id ?? null),
+    supplier_id: normalizeUuidOrNull(source.supplier_id ?? null),
+    package_id: normalizeUuidOrNull(source.package_id ?? null),
+  });
+
   const loadLookups = async () => {
     if (!supabase) return;
 
-    const [clientsRes, templatesRes, packagesRes] = await Promise.all([
+    const [clientsRes, templatesRes] = await Promise.all([
       supabase.from('clients').select('id, full_name').order('full_name', { ascending: true }),
       supabase
         .from('service_templates')
-        .select('id, title, package_id, packages(title)')
+        .select('id, title, package_id, country_id, visa_type_id, professional_status')
+        .is('client_id', null)
         .order('title', { ascending: true }),
-      supabase.from('packages').select('id, title').order('title', { ascending: true }),
     ]);
 
     if (clientsRes.error) throw clientsRes.error;
     if (templatesRes.error) throw templatesRes.error;
-    if (packagesRes.error) throw packagesRes.error;
 
     setClients(clientsRes.data || []);
-    setTemplates(
-      (templatesRes.data || []).map((template) => ({
-        ...template,
-        packageName: template.packages?.title || '—',
-      }))
-    );
-    setPackages(packagesRes.data || []);
+    setTemplates((templatesRes.data || []).map((template) => ({ ...template })));
   };
 
   const loadClientServices = async () => {
@@ -106,7 +141,7 @@ export default function Services({ language = 'en' }) {
 
     const { data, error: fetchError } = await supabase
       .from('client_services')
-      .select('id, client_id, template_id, stages_data, created_at, clients(full_name), service_templates(title)')
+      .select('id, client_id, template_id, stages_data, created_at, clients(full_name), service_templates(title, country_id, visa_type_id)')
       .order('created_at', { ascending: false });
 
     if (fetchError) throw fetchError;
@@ -121,6 +156,52 @@ export default function Services({ language = 'en' }) {
     );
   };
 
+  const loadTemplateMatrixOptions = async () => {
+    if (!supabase) {
+      setMatrixOptions({ country_id: [], visa_type_id: [], professional_status: [] });
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('service_templates')
+      .select('country_id, visa_type_id, professional_status')
+      .is('client_id', null);
+
+    if (error) throw error;
+
+    const collect = (key) =>
+      [...new Set((data || []).map((row) => row[key]).filter((value) => value && String(value).trim()))].sort((a, b) => a.localeCompare(b));
+
+    setMatrixOptions({
+      country_id: collect('country_id'),
+      visa_type_id: collect('visa_type_id'),
+      professional_status: collect('professional_status'),
+    });
+  };
+
+  const loadAssignMatrixOptions = async () => {
+    if (!supabase) {
+      setAssignMatrixOptions({ country_id: [], visa_type_id: [], professional_status: [] });
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('service_templates')
+      .select('country_id, visa_type_id, professional_status')
+      .is('client_id', null);
+
+    if (error) throw error;
+
+    const collect = (key) =>
+      [...new Set((data || []).map((row) => row[key]).filter((value) => value && String(value).trim()))].sort((a, b) => a.localeCompare(b));
+
+    setAssignMatrixOptions({
+      country_id: collect('country_id'),
+      visa_type_id: collect('visa_type_id'),
+      professional_status: collect('professional_status'),
+    });
+  };
+
   const loadAll = async () => {
     try {
       setLoading(true);
@@ -131,7 +212,7 @@ export default function Services({ language = 'en' }) {
         return;
       }
 
-      await Promise.all([loadLookups(), loadClientServices()]);
+      await Promise.all([loadLookups(), loadClientServices(), loadTemplateMatrixOptions(), loadAssignMatrixOptions()]);
     } catch (err) {
       setError(err.message || 'Unable to load services.');
     } finally {
@@ -145,19 +226,42 @@ export default function Services({ language = 'en' }) {
 
   const selectedClientService = clientServices.find((row) => row.id === selectedClientServiceId) || null;
 
+  const clientUniqueCountries = [...new Set(clientServices.map((row) => row.service_templates?.country_id).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const clientUniqueVisaTypes = [...new Set(clientServices.map((row) => row.service_templates?.visa_type_id).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const templateUniqueCountries = ['All', ...new Set(templates.filter((template) => template.client_id === null && template.country_id).map((template) => template.country_id))];
+  const templateUniqueVisas = ['All', ...new Set(templates.filter((template) => template.client_id === null && template.visa_type_id).map((template) => template.visa_type_id))];
+
+  const filteredClientServices = clientServices.filter((workflow) => {
+    const matchesCountry = countryFilter === 'All' || workflow.service_templates?.country_id === countryFilter;
+    const matchesVisa = visaFilter === 'All' || workflow.service_templates?.visa_type_id === visaFilter;
+    return matchesCountry && matchesVisa;
+  });
+
   // ---- Client Services: assign + workflow updates ----
 
-  const openAssignModal = () => {
-    setAssignForm({ client_id: '', template_id: '' });
+  const openAssignModal = async () => {
+    setAssignForm({
+      client_id: '',
+      country_id: '',
+      visa_type_id: '',
+      professional_status: '',
+    });
+    setError('');
     setIsAssignModalOpen(true);
+    try {
+      await loadAssignMatrixOptions();
+    } catch (err) {
+      setError(err.message || 'Unable to load workflow matrix options.');
+    }
   };
 
   const handleAssignSubmit = async (event) => {
     event.preventDefault();
     if (!supabase) return;
 
-    if (!assignForm.client_id || !assignForm.template_id) {
-      setError('Please select both a client and a service template.');
+    const { client_id, country_id, visa_type_id, professional_status } = assignForm;
+    if (!client_id || !country_id || !visa_type_id || !professional_status) {
+      setError('Please select a client, country, visa type, and professional status.');
       return;
     }
 
@@ -165,9 +269,104 @@ export default function Services({ language = 'en' }) {
       setSaving(true);
       setError('');
 
-      await ensureClientService({ clientId: assignForm.client_id, templateId: assignForm.template_id });
+      const { data: masterTemplate, error: fetchError } = await supabase
+        .from('service_templates')
+        .select('*')
+        .eq('country_id', country_id)
+        .eq('visa_type_id', visa_type_id)
+        .eq('professional_status', professional_status)
+        .is('client_id', null)
+        .maybeSingle();
+
+      if (fetchError) throw fetchError;
+      if (!masterTemplate) {
+        setError('No master template found for this matrix combination.');
+        return;
+      }
+
+      const clientName = clients.find((client) => client.id === client_id)?.full_name || 'Client';
+      const templatePayload = {
+        title: `${masterTemplate.title || 'Visa Workflow'} - ${clientName}`,
+        country_id: masterTemplate.country_id,
+        visa_type_id: masterTemplate.visa_type_id,
+        professional_status: masterTemplate.professional_status,
+        client_id: client_id,
+        supplier_id: null,
+        package_id: null,
+      };
+
+      const { data: newTemplate, error: insertError } = await supabase
+        .from('service_templates')
+        .insert([templatePayload])
+        .select('*')
+        .single();
+
+      if (insertError) throw insertError;
+
+      const [stagesRes, stepsRes, itemsRes] = await Promise.all([
+        supabase
+          .from('service_stages')
+          .select('*')
+          .eq('service_template_id', masterTemplate.id)
+          .order('sort_order', { ascending: true }),
+        supabase.from('service_steps').select('*').order('sort_order', { ascending: true }),
+        supabase.from('service_items').select('*').order('sort_order', { ascending: true }),
+      ]);
+
+      if (stagesRes.error) throw stagesRes.error;
+      if (stepsRes.error) throw stepsRes.error;
+      if (itemsRes.error) throw itemsRes.error;
+
+      const stageIdMap = {};
+      for (const stage of stagesRes.data || []) {
+        const { id: oldStageId, created_at: _stageCreatedAt, updated_at: _stageUpdatedAt, service_template_id: _ignoredTemplateId, ...stagePayload } = stage;
+
+        const { data: insertedStage, error: stageInsertError } = await supabase
+          .from('service_stages')
+          .insert([{ ...stagePayload, service_template_id: newTemplate.id }])
+          .select('id')
+          .single();
+
+        if (stageInsertError) throw stageInsertError;
+        stageIdMap[oldStageId] = insertedStage.id;
+      }
+
+      const stepIdMap = {};
+      const relevantSteps = (stepsRes.data || []).filter((step) => stageIdMap[step.stage_id]);
+
+      for (const step of relevantSteps) {
+        const { id: oldStepId, created_at: _stepCreatedAt, updated_at: _stepUpdatedAt, ...stepPayload } = step;
+
+        const { data: insertedStep, error: stepInsertError } = await supabase
+          .from('service_steps')
+          .insert([{ ...stepPayload, stage_id: stageIdMap[step.stage_id] }])
+          .select('id')
+          .single();
+
+        if (stepInsertError) throw stepInsertError;
+        stepIdMap[oldStepId] = insertedStep.id;
+      }
+
+      const relevantItems = (itemsRes.data || []).filter((item) => stepIdMap[item.step_id]);
+      const itemsToInsert = relevantItems.map((item) => {
+        const { id: _oldItemId, created_at: _itemCreatedAt, updated_at: _itemUpdatedAt, ...itemPayload } = item;
+        return {
+          ...itemPayload,
+          step_id: stepIdMap[item.step_id],
+          is_done: false,
+          drive_url: null,
+        };
+      });
+
+      if (itemsToInsert.length > 0) {
+        const { error: itemInsertError } = await supabase.from('service_items').insert(itemsToInsert);
+        if (itemInsertError) throw itemInsertError;
+      }
+
+      await ensureClientService({ clientId: client_id, templateId: newTemplate.id });
 
       setIsAssignModalOpen(false);
+      setAssignForm({ client_id: '', country_id: '', visa_type_id: '', professional_status: '' });
       await loadClientServices();
     } catch (err) {
       setError(err.message || 'Unable to assign service to client.');
@@ -276,7 +475,9 @@ export default function Services({ language = 'en' }) {
 
   // ---- Templates: manage stages/steps/items ----
 
-  const selectedTemplate = templates.find((template) => template.id === selectedTemplateId) || null;
+  const selectedTemplate = activeTemplate
+    ? templates.find((template) => template.id === activeTemplate.id) || activeTemplate
+    : templates.find((template) => template.id === selectedTemplateId) || null;
 
   const loadWorkflow = async (templateId) => {
     if (!templateId || !supabase) {
@@ -325,6 +526,24 @@ export default function Services({ language = 'en' }) {
     loadWorkflow(selectedTemplateId);
   }, [selectedTemplateId, mode]);
 
+  const findMasterTemplateMatrixConflict = async ({ countryValue, visaValue, professionalValue, excludeId = null }) => {
+    if (!supabase) return null;
+
+    const { data, error } = await supabase
+      .from('service_templates')
+      .select('id, title, country_id, visa_type_id, professional_status')
+      .eq('country_id', countryValue)
+      .eq('visa_type_id', visaValue)
+      .eq('professional_status', professionalValue)
+      .is('client_id', null)
+      .neq('id', excludeId || '')
+      .limit(1)
+      .maybeSingle();
+
+    if (error && error.code !== 'PGRST116') throw error;
+    return data || null;
+  };
+
   const addTemplate = async () => {
     if (!supabase) return;
 
@@ -332,18 +551,133 @@ export default function Services({ language = 'en' }) {
       setSaving(true);
       setError('');
 
-      const uniqueKey = createUniqueTemplateKey();
-      const { data, error: insertError } = await supabase
+      const sourceTemplate = templateToCopy || null;
+      const countryValue = String(templateMatrix.country_id || sourceTemplate?.country_id || '').trim();
+      const visaValue = String(templateMatrix.visa_type_id || sourceTemplate?.visa_type_id || '').trim();
+      const professionalValue = String(templateMatrix.professional_status || sourceTemplate?.professional_status || '').trim();
+
+      if (!countryValue || !visaValue || !professionalValue) {
+        setError('Country, visa type, and professional status are required before saving the master template matrix.');
+        return;
+      }
+
+      const conflict = await findMasterTemplateMatrixConflict({
+        countryValue,
+        visaValue,
+        professionalValue,
+      });
+
+      if (conflict) {
+        setError(`A master template already exists for ${countryValue} / ${visaValue} / ${professionalValue}. Please reuse that row instead of creating a duplicate.`);
+        return;
+      }
+
+      const payload = sanitizeTemplateMatrixPayload({
+        title: draftTemplateName.trim() || sourceTemplate?.title || 'New Template',
+        country_id: countryValue,
+        visa_type_id: visaValue,
+        professional_status: professionalValue,
+        client_id: null,
+        supplier_id: null,
+        package_id: null,
+      });
+
+      const { data: newTemplate, error: insertError } = await supabase
         .from('service_templates')
-        .insert([{ title: 'New Template', country_id: uniqueKey, visa_type_id: 'general' }])
-        .select('id, title, package_id')
+        .insert([payload])
+        .select('id, title, package_id, country_id, visa_type_id, professional_status')
         .single();
 
       if (insertError) throw insertError;
 
-      setTemplates((prev) => [...prev, { ...data, packageName: '—' }].sort((a, b) => a.title.localeCompare(b.title)));
-      setSelectedTemplateId(data.id);
-      setDraftTemplateName(data.title);
+      if (sourceTemplate) {
+        const { data: sourceStages, error: stagesError } = await supabase
+          .from('service_stages')
+          .select('*')
+          .eq('service_template_id', sourceTemplate.id)
+          .order('sort_order', { ascending: true });
+
+        if (stagesError) throw stagesError;
+
+        const stageIdMap = {};
+        for (const stage of sourceStages || []) {
+          const { id: oldStageId, created_at: _stageCreatedAt, updated_at: _stageUpdatedAt, service_template_id: _ignoredTemplateId, ...stagePayload } = stage;
+
+          const { data: insertedStage, error: stageInsertError } = await supabase
+            .from('service_stages')
+            .insert([{ ...stagePayload, service_template_id: newTemplate.id }])
+            .select('id')
+            .single();
+
+          if (stageInsertError) throw stageInsertError;
+          stageIdMap[oldStageId] = insertedStage.id;
+        }
+
+        const sourceStageIds = Object.keys(stageIdMap);
+        const { data: sourceSteps, error: stepsError } = await supabase
+          .from('service_steps')
+          .select('*')
+          .in('stage_id', sourceStageIds)
+          .order('sort_order', { ascending: true });
+
+        if (stepsError) throw stepsError;
+
+        const stepIdMap = {};
+        for (const step of sourceSteps || []) {
+          if (!stageIdMap[step.stage_id]) continue;
+
+          const { id: oldStepId, created_at: _stepCreatedAt, updated_at: _stepUpdatedAt, ...stepPayload } = step;
+
+          const { data: insertedStep, error: stepInsertError } = await supabase
+            .from('service_steps')
+            .insert([{ ...stepPayload, stage_id: stageIdMap[step.stage_id] }])
+            .select('id')
+            .single();
+
+          if (stepInsertError) throw stepInsertError;
+          stepIdMap[oldStepId] = insertedStep.id;
+        }
+
+        const sourceStepIds = Object.keys(stepIdMap);
+        if (sourceStepIds.length > 0) {
+          const { data: sourceItems, error: itemsError } = await supabase
+            .from('service_items')
+            .select('*')
+            .in('step_id', sourceStepIds)
+            .order('sort_order', { ascending: true });
+
+          if (itemsError) throw itemsError;
+
+          const itemsToInsert = (sourceItems || [])
+            .filter((item) => stepIdMap[item.step_id])
+            .map((item) => {
+              const { id: _oldItemId, created_at: _itemCreatedAt, updated_at: _itemUpdatedAt, ...itemPayload } = item;
+              return {
+                ...itemPayload,
+                step_id: stepIdMap[item.step_id],
+              };
+            });
+
+          if (itemsToInsert.length > 0) {
+            const { error: itemInsertError } = await supabase.from('service_items').insert(itemsToInsert);
+            if (itemInsertError) throw itemInsertError;
+          }
+        }
+      }
+
+      const nextTemplate = { ...newTemplate, packageName: '—' };
+      setTemplates((prev) => [...prev, nextTemplate].sort((a, b) => a.title.localeCompare(b.title)));
+      setSelectedTemplateId(newTemplate.id);
+      setActiveTemplate(nextTemplate);
+      setDraftTemplateName(newTemplate.title);
+      setTemplateMatrix({
+        country_id: newTemplate.country_id || '',
+        visa_type_id: newTemplate.visa_type_id || '',
+        professional_status: newTemplate.professional_status || '',
+      });
+      setTemplateToCopy(null);
+      setViewMode('edit');
+      await loadTemplateMatrixOptions();
     } catch (err) {
       setError(err.message || 'Unable to create template.');
     } finally {
@@ -375,14 +709,42 @@ export default function Services({ language = 'en' }) {
     }
   };
 
-  const updateTemplateLinks = async (packageId) => {
+  const updateTemplateMatrix = async (nextMatrix) => {
     if (!selectedTemplateId) return;
 
     try {
       setSaving(true);
+      setError('');
+
+      const payload = sanitizeTemplateMatrixPayload({
+        country_id: nextMatrix.country_id,
+        visa_type_id: nextMatrix.visa_type_id,
+        professional_status: nextMatrix.professional_status,
+        client_id: null,
+        supplier_id: null,
+        package_id: null,
+      });
+
+      if (!payload.country_id || !payload.visa_type_id || !payload.professional_status) {
+        setError('Country, visa type, and professional status are required to save the master template matrix.');
+        return;
+      }
+
+      const conflict = await findMasterTemplateMatrixConflict({
+        countryValue: payload.country_id,
+        visaValue: payload.visa_type_id,
+        professionalValue: payload.professional_status,
+        excludeId: selectedTemplateId,
+      });
+
+      if (conflict) {
+        setError(`This matrix already exists on another master template (${conflict.title}). Please keep one unique combination.`);
+        return;
+      }
+
       const { error: updateError } = await supabase
         .from('service_templates')
-        .update({ package_id: packageId || null })
+        .update(payload)
         .eq('id', selectedTemplateId);
 
       if (updateError) throw updateError;
@@ -390,16 +752,18 @@ export default function Services({ language = 'en' }) {
       setTemplates((prev) =>
         prev.map((template) =>
           template.id === selectedTemplateId
-            ? {
-                ...template,
-                package_id: packageId || null,
-                packageName: packages.find((pkg) => pkg.id === packageId)?.title || '—',
-              }
+            ? { ...template, ...payload }
             : template
         )
       );
+      setTemplateMatrix({
+        country_id: payload.country_id || '',
+        visa_type_id: payload.visa_type_id || '',
+        professional_status: payload.professional_status || '',
+      });
+      await loadTemplateMatrixOptions();
     } catch (err) {
-      setError(err.message || 'Unable to update template links.');
+      setError(err.message || 'Unable to update the visa matrix.');
     } finally {
       setSaving(false);
     }
@@ -665,17 +1029,96 @@ export default function Services({ language = 'en' }) {
   useEffect(() => {
     if (!selectedTemplate) {
       setEditingTemplateName(false);
+      setTemplateMatrix({ country_id: '', visa_type_id: '', professional_status: '' });
       return;
     }
     setDraftTemplateName(selectedTemplate.title);
+    setTemplateMatrix({
+      country_id: selectedTemplate.country_id || '',
+      visa_type_id: selectedTemplate.visa_type_id || '',
+      professional_status: selectedTemplate.professional_status || '',
+    });
   }, [selectedTemplate]);
 
   const totalStages = workflow.length;
   const totalSteps = workflow.reduce((sum, stage) => sum + (stage.steps || []).length, 0);
   const totalTemplateItems = workflow.reduce((sum, stage) => sum + (stage.steps || []).reduce((s, step) => s + (step.items || []).length, 0), 0);
+  const masterTemplates = templates.filter((template) => template.client_id === null);
+  const filteredTemplates = masterTemplates.filter((template) => {
+    const matchesCountry = filterCountry === 'All' || template.country_id === filterCountry;
+    const matchesVisa = filterVisa === 'All' || template.visa_type_id === filterVisa;
+    return matchesCountry && matchesVisa;
+  });
+
+  const handleSaveMatrix = async () => {
+    const nextMatrix = {
+      country_id: country.trim(),
+      visa_type_id: visaType.trim(),
+      professional_status: status.trim(),
+    };
+
+    if (!nextMatrix.country_id || !nextMatrix.visa_type_id || !nextMatrix.professional_status) {
+      setError('Country, visa type, and professional status are required.');
+      return;
+    }
+
+    setTemplateMatrix(nextMatrix);
+    const previousCopy = templateToCopy;
+    if (previousCopy) {
+      setTemplateToCopy(previousCopy);
+    }
+
+    await addTemplate();
+  };
+
+  const matrixFields = [
+    {
+      key: 'country_id',
+      label: 'Country',
+      placeholder: 'e.g. Algeria',
+      optionList: matrixOptions.country_id,
+    },
+    {
+      key: 'visa_type_id',
+      label: 'Visa Type',
+      placeholder: 'e.g. Tourist / Business',
+      optionList: matrixOptions.visa_type_id,
+    },
+    {
+      key: 'professional_status',
+      label: 'Professional Status',
+      placeholder: 'e.g. Employee / Student',
+      optionList: matrixOptions.professional_status,
+    },
+  ];
+
+  const renderMatrixField = (field) => (
+    <label key={field.key} className="block text-sm text-brand-navy">
+      <span className="mb-1 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">{field.label}</span>
+      <input
+        list={`${field.key}-options`}
+        type="text"
+        value={templateMatrix[field.key] || ''}
+        onChange={(event) => {
+          const nextValue = event.target.value;
+          setTemplateMatrix((prev) => ({ ...prev, [field.key]: nextValue }));
+          if (selectedTemplateId) {
+            updateTemplateMatrix({ ...templateMatrix, [field.key]: nextValue });
+          }
+        }}
+        placeholder={field.placeholder}
+        className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 text-sm text-brand-navy outline-none focus:border-brand-gold"
+      />
+      <datalist id={`${field.key}-options`}>
+        {(field.optionList || []).map((option) => (
+          <option key={option} value={option} />
+        ))}
+      </datalist>
+    </label>
+  );
 
   return (
-    <div className="space-y-6">
+    <div className="w-full space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-sm font-semibold uppercase tracking-[0.2em] text-brand-gold">{t.eyebrow}</p>
@@ -724,7 +1167,37 @@ export default function Services({ language = 'en' }) {
           />
         ) : (
           <div className="space-y-4">
-            <div className="flex justify-end">
+            <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+              <div className="grid w-full max-w-xl gap-3 md:grid-cols-2">
+                <label className="block text-sm text-brand-navy">
+                  <span className="mb-1 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Country</span>
+                  <select
+                    value={countryFilter}
+                    onChange={(event) => setCountryFilter(event.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 text-sm text-brand-navy outline-none focus:border-brand-gold"
+                  >
+                    <option value="All">All</option>
+                    {clientUniqueCountries.map((countryName) => (
+                      <option key={countryName} value={countryName}>{countryName}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="block text-sm text-brand-navy">
+                  <span className="mb-1 block text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">Visa Type</span>
+                  <select
+                    value={visaFilter}
+                    onChange={(event) => setVisaFilter(event.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 text-sm text-brand-navy outline-none focus:border-brand-gold"
+                  >
+                    <option value="All">All</option>
+                    {clientUniqueVisaTypes.map((visaName) => (
+                      <option key={visaName} value={visaName}>{visaName}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
               <button
                 type="button"
                 onClick={openAssignModal}
@@ -737,13 +1210,13 @@ export default function Services({ language = 'en' }) {
 
             {loading ? (
               <div className="rounded-2xl border border-slate-200 bg-brand-card p-8 text-center text-sm text-slate-500">Loading...</div>
-            ) : clientServices.length === 0 ? (
+            ) : filteredClientServices.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-200 bg-brand-card p-8 text-center text-sm text-slate-500">
                 {t.noClientServices}
               </div>
             ) : (
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                {clientServices.map((row) => (
+                {filteredClientServices.map((row) => (
                   <div
                     key={row.id}
                     onClick={() => setSelectedClientServiceId(row.id)}
@@ -784,39 +1257,176 @@ export default function Services({ language = 'en' }) {
           </div>
         )
       ) : (
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center gap-2">
-            {templates.map((template) => (
-              <button
-                key={template.id}
-                type="button"
-                onClick={() => setSelectedTemplateId(template.id)}
-                className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
-                  selectedTemplateId === template.id ? 'bg-brand-navy text-white' : 'bg-brand-surface text-brand-navy hover:bg-slate-200'
-                }`}
-              >
-                {template.title}
-              </button>
-            ))}
+        <>
+          {viewMode === 'grid' && (
+            <div className="mt-6 space-y-6">
+              <div className="flex gap-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <div className="flex-1">
+                  <label className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Filter by Country</label>
+                  <select
+                    value={filterCountry}
+                    onChange={(event) => setFilterCountry(event.target.value)}
+                    className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-amber-400"
+                  >
+                    {templateUniqueCountries.map((countryOption) => (
+                      <option key={countryOption} value={countryOption}>{countryOption}</option>
+                    ))}
+                  </select>
+                </div>
 
-            <button
-              type="button"
-              onClick={addTemplate}
-              className="inline-flex items-center gap-2 rounded-xl bg-brand-gold px-4 py-2 text-sm font-bold text-brand-navy"
-            >
-              <Plus size={16} />
-              {t.newTemplate}
-            </button>
-          </div>
+                <div className="flex-1">
+                  <label className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Filter by Visa Type</label>
+                  <select
+                    value={filterVisa}
+                    onChange={(event) => setFilterVisa(event.target.value)}
+                    className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-amber-400"
+                  >
+                    {templateUniqueVisas.map((visaOption) => (
+                      <option key={visaOption} value={visaOption}>{visaOption}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
 
-          {templates.length === 0 && (
-            <div className="rounded-2xl border border-dashed border-slate-200 bg-brand-card p-8 text-center text-sm text-slate-500">
-              {t.noTemplates}
+              <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+                <div
+                  onClick={() => {
+                    setActiveTemplate(null);
+                    setViewMode('create');
+                  }}
+                  className="flex h-40 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-amber-300 bg-amber-50 transition-colors hover:bg-amber-100"
+                >
+                  <span className="text-lg font-bold text-amber-700">+ Build New Matrix</span>
+                </div>
+
+                {filteredTemplates.map((template) => (
+                  <div
+                    key={template.id}
+                    onClick={() => {
+                      setActiveTemplate(template);
+                      setViewMode('edit');
+                    }}
+                    className="flex h-40 cursor-pointer flex-col justify-between rounded-xl border border-slate-200 bg-white p-6 shadow-sm transition-shadow hover:shadow-md"
+                  >
+                    <div>
+                      <h3 className="text-lg font-bold text-slate-800">{template.country_id || 'Unnamed'}</h3>
+                      <p className="text-sm font-semibold text-slate-600">{template.visa_type_id || 'No Visa Type'}</p>
+                    </div>
+                    <div className="mt-4 inline-block w-max rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">
+                      {template.professional_status || 'Any Status'}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
-          {selectedTemplate && (
-            <div className="space-y-4">
+          {viewMode === 'create' && (
+            <div className="matrix-card mt-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="mb-6 flex items-center justify-between">
+                <h2 className="text-lg font-bold text-slate-800">Configure New Matrix</h2>
+                <button
+                  type="button"
+                  onClick={() => setViewMode('grid')}
+                  className="text-sm text-slate-500 hover:text-slate-700"
+                >
+                  Cancel
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Country</label>
+                  <input
+                    list="country-list"
+                    value={country}
+                    onChange={(e) => setCountry(e.target.value)}
+                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-amber-400"
+                  />
+                  <datalist id="country-list">
+                    {(matrixOptions.country_id || []).map((option) => (
+                      <option key={option} value={option} />
+                    ))}
+                  </datalist>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Visa Type</label>
+                  <input
+                    list="visa-list"
+                    value={visaType}
+                    onChange={(e) => setVisaType(e.target.value)}
+                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-amber-400"
+                  />
+                  <datalist id="visa-list">
+                    {(matrixOptions.visa_type_id || []).map((option) => (
+                      <option key={option} value={option} />
+                    ))}
+                  </datalist>
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Professional Status</label>
+                  <input
+                    list="status-list"
+                    value={status}
+                    onChange={(e) => setStatus(e.target.value)}
+                    className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-amber-400"
+                  />
+                  <datalist id="status-list">
+                    {(matrixOptions.professional_status || []).map((option) => (
+                      <option key={option} value={option} />
+                    ))}
+                  </datalist>
+                </div>
+              </div>
+
+              <div className="mt-6 flex items-center justify-between border-t border-slate-100 pt-6">
+                <div className="max-w-md flex-1">
+                  <label className="text-sm text-slate-600">Optional: Copy from existing template</label>
+                  <select
+                    value={templateToCopy}
+                    onChange={(e) => setTemplateToCopy(e.target.value)}
+                    className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-amber-400"
+                  >
+                    <option value="">Start from scratch</option>
+                    {masterTemplates.map((template) => (
+                      <option key={template.id} value={template.id}>
+                        {template.country_id} - {template.visa_type_id} ({template.professional_status})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleSaveMatrix}
+                  className="rounded-lg bg-amber-500 px-6 py-2 font-bold text-white hover:bg-amber-600"
+                >
+                  Save Matrix & Build Workflow
+                </button>
+              </div>
+            </div>
+          )}
+
+          {viewMode === 'edit' && activeTemplate && (
+            <div className="workflow-editor mt-6">
+              <div className="mb-6 flex items-center justify-between">
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('grid')}
+                    className="mb-2 text-sm font-semibold text-amber-600 hover:text-amber-700"
+                  >
+                    ← Back to Templates
+                  </button>
+                  <h2 className="text-2xl font-bold text-slate-800">
+                    {activeTemplate.country_id} - {activeTemplate.visa_type_id}
+                  </h2>
+                  <p className="text-slate-500">Status: {activeTemplate.professional_status}</p>
+                </div>
+              </div>
+
               <div className="rounded-2xl border border-slate-200 bg-brand-card p-4 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-2">
@@ -855,22 +1465,9 @@ export default function Services({ language = 'en' }) {
                     Delete template
                   </button>
                 </div>
-
-                <div className="mt-4 grid gap-3 md:grid-cols-1">
-                  <select
-                    value={selectedTemplate.package_id || ''}
-                    onChange={(event) => updateTemplateLinks(event.target.value)}
-                    className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 text-sm text-brand-navy outline-none focus:border-brand-gold"
-                  >
-                    <option value="">No package linked</option>
-                    {packages.map((pkg) => (
-                      <option key={pkg.id} value={pkg.id}>{pkg.title}</option>
-                    ))}
-                  </select>
-                </div>
               </div>
 
-              <div className="grid gap-3 md:grid-cols-3">
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
                 <div className="rounded-2xl border border-slate-200 bg-brand-card p-4 shadow-sm">
                   <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Stages</p>
                   <p className="mt-2 text-2xl font-bold text-brand-navy">{totalStages}</p>
@@ -885,7 +1482,7 @@ export default function Services({ language = 'en' }) {
                 </div>
               </div>
 
-              <div className="flex justify-end">
+              <div className="mt-4 flex justify-end">
                 <button
                   type="button"
                   onClick={addStage}
@@ -896,7 +1493,7 @@ export default function Services({ language = 'en' }) {
                 </button>
               </div>
 
-              <div className="space-y-4">
+              <div className="mt-4 space-y-4">
                 {loading ? (
                   <div className="rounded-2xl border border-slate-200 bg-brand-card p-6 text-center text-sm text-slate-500">Loading workflow...</div>
                 ) : workflow.length === 0 ? (
@@ -1038,7 +1635,7 @@ export default function Services({ language = 'en' }) {
               </div>
             </div>
           )}
-        </div>
+        </>
       )}
 
       {isAssignModalOpen && (
@@ -1062,16 +1659,46 @@ export default function Services({ language = 'en' }) {
             </div>
 
             <div>
-              <label className="mb-1 block text-sm font-medium text-brand-navy">Service template</label>
+              <label className="mb-1 block text-sm font-medium text-brand-navy">Country</label>
               <select
-                value={assignForm.template_id}
-                onChange={(event) => setAssignForm((prev) => ({ ...prev, template_id: event.target.value }))}
+                value={assignForm.country_id}
+                onChange={(event) => setAssignForm((prev) => ({ ...prev, country_id: event.target.value }))}
                 className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 text-sm text-brand-navy outline-none focus:border-brand-gold"
                 required
               >
-                <option value="">Select template</option>
-                {templates.map((template) => (
-                  <option key={template.id} value={template.id}>{template.title}</option>
+                <option value="">Select country</option>
+                {assignMatrixOptions.country_id.map((option) => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-brand-navy">Visa Type</label>
+              <select
+                value={assignForm.visa_type_id}
+                onChange={(event) => setAssignForm((prev) => ({ ...prev, visa_type_id: event.target.value }))}
+                className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 text-sm text-brand-navy outline-none focus:border-brand-gold"
+                required
+              >
+                <option value="">Select visa type</option>
+                {assignMatrixOptions.visa_type_id.map((option) => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-brand-navy">Professional Status</label>
+              <select
+                value={assignForm.professional_status}
+                onChange={(event) => setAssignForm((prev) => ({ ...prev, professional_status: event.target.value }))}
+                className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 text-sm text-brand-navy outline-none focus:border-brand-gold"
+                required
+              >
+                <option value="">Select professional status</option>
+                {assignMatrixOptions.professional_status.map((option) => (
+                  <option key={option} value={option}>{option}</option>
                 ))}
               </select>
             </div>
@@ -1086,7 +1713,7 @@ export default function Services({ language = 'en' }) {
               </button>
               <button
                 type="submit"
-                disabled={saving}
+                disabled={saving || !assignForm.client_id || !assignForm.country_id || !assignForm.visa_type_id || !assignForm.professional_status}
                 className="rounded-xl bg-brand-gold px-4 py-2.5 text-sm font-bold text-brand-navy disabled:opacity-60"
               >
                 {saving ? 'Assigning...' : 'Assign'}

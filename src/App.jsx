@@ -562,6 +562,7 @@ function App() {
               <Route path="/settings/package-types" element={<AgencySettings language={language} ui={ui} activeSection="package" />} />
               <Route path="/settings/commission" element={<AgencySettings language={language} ui={ui} activeSection="commission" />} />
               <Route path="/settings/commission-payouts" element={<AgencySettings language={language} ui={ui} activeSection="commission_payouts" />} />
+              <Route path="/settings/commission-payouts/:commissionId" element={<AgencySettings language={language} ui={ui} activeSection="commission_payouts" />} />
               <Route path="/settings/team" element={<AgencySettings language={language} ui={ui} activeSection="team" />} />
               <Route path="/role-dashboard" element={<RoleDashboard language={language} ui={ui} />} />
               <Route path="/bank" element={<Bank language={language} ui={ui} />} />

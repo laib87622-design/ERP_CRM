@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Search } from 'lucide-react';
+import { Eye, History, Search, X } from 'lucide-react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { fetchAgencySettings, saveAgencySettings, defaultAgencySettings, slugifyCommissionTypeKey } from '../lib/agencySettings';
 
@@ -107,6 +108,8 @@ const roleBadgeStyles = {
 };
 
 export default function AgencySettings({ language = 'en', activeSection = 'agency' }) {
+  const navigate = useNavigate();
+  const { commissionId } = useParams();
   const t = fieldGroups[language] || fieldGroups.en;
   const localizedFieldLabels = {
     en: {
@@ -281,8 +284,11 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
   const [commissionSearch, setCommissionSearch] = useState('');
   const [commissionPayoutFilter, setCommissionPayoutFilter] = useState('all');
   const [commissionPayouts, setCommissionPayouts] = useState([]);
+  const [paidCommissionHistory, setPaidCommissionHistory] = useState([]);
   const [commissionPayoutsLoading, setCommissionPayoutsLoading] = useState(false);
   const [commissionSummary, setCommissionSummary] = useState({ pending: 0, ready: 0, paid: 0 });
+  const [selectedPaidCommission, setSelectedPaidCommission] = useState(null);
+  const [showPaidHistory, setShowPaidHistory] = useState(false);
   const [financialAccounts, setFinancialAccounts] = useState([]);
   const [payoutAccountIds, setPayoutAccountIds] = useState({});
   const [isProcessing, setIsProcessing] = useState(false);
@@ -445,7 +451,76 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
           notes: row.notes || `Commission payout - ${row.agent_id || 'agent'}`,
         }));
 
+        const paidRows = normalizedAllRows.filter((row) => row.status === 'PAID');
+        const invoiceIds = [...new Set(paidRows.map((row) => row.invoice_id).filter(Boolean))];
+        const agentIds = [...new Set(paidRows.map((row) => row.agent_id).filter(Boolean))];
+
+        let invoiceReferenceMap = {};
+        let agentNameMap = {};
+        let accountMatchMap = {};
+
+        if (invoiceIds.length > 0) {
+          const { data: invoiceRows } = await supabase
+            .from('invoices')
+            .select('id, reference, invoice_number, grand_total, paid_at')
+            .in('id', invoiceIds);
+
+          invoiceReferenceMap = Object.fromEntries((invoiceRows || []).map((invoice) => [invoice.id, invoice.reference || invoice.invoice_number || invoice.id]));
+        }
+
+        if (agentIds.length > 0) {
+          const { data: profileRows } = await supabase
+            .from('profiles')
+            .select('id, full_name')
+            .in('id', agentIds);
+
+          agentNameMap = Object.fromEntries((profileRows || []).map((profile) => [profile.id, profile.full_name || 'Agent']));
+        }
+
+        const { data: bankRows } = await supabase
+          .from('bank_entries')
+          .select('id, account_id, description, debit, credit, operation_date, agent_id')
+          .eq('operation_type', 'commission')
+          .order('operation_date', { ascending: false });
+
+        const accountIds = [...new Set((bankRows || []).map((entry) => entry.account_id).filter(Boolean))];
+        let accountLabelMap = {};
+
+        if (accountIds.length > 0) {
+          const { data: accountRows } = await supabase
+            .from('financial_accounts')
+            .select('id, label, bank_name')
+            .in('id', accountIds);
+
+          accountLabelMap = Object.fromEntries((accountRows || []).map((account) => [account.id, account.label || account.bank_name || 'Account']));
+        }
+
+        accountMatchMap = Object.fromEntries((bankRows || []).map((entry) => [entry.id, accountLabelMap[entry.account_id] || 'Account']));
+
+        const mappedPaidHistory = paidRows.map((row) => {
+          const matchingEntry = (bankRows || []).find((entry) => {
+            const sameAgent = entry.agent_id === row.agent_id;
+            const sameAmount = Number(entry.debit || 0) === Number(row.amount || 0) || Number(entry.credit || 0) === Number(row.amount || 0) || (Number(entry.debit || 0) + Number(entry.credit || 0)) === Number(row.amount || 0);
+            const sameNote = (entry.description || '').toLowerCase().includes(String(row.notes || 'Commission payout').toLowerCase()) || (entry.description || '').toLowerCase().includes('commission payout');
+            const sameDate = row.paid_at && entry.operation_date && Math.abs(new Date(entry.operation_date).getTime() - new Date(row.paid_at).getTime()) < 1000 * 60 * 60 * 24;
+            return sameAgent && (sameAmount || sameNote || sameDate);
+          });
+
+          const paymentAmount = Number(matchingEntry?.debit || matchingEntry?.credit || row.amount || 0);
+          const invoiceLabel = normalizeInvoiceReference(invoiceReferenceMap[row.invoice_id] || row.invoice_id || 'Manual commission');
+
+          return {
+            ...row,
+            amount: paymentAmount,
+            invoice_reference: invoiceLabel,
+            agent_name: agentNameMap[row.agent_id] || 'Agent',
+            payment_account: matchingEntry ? accountMatchMap[matchingEntry.id] || 'Account' : '—',
+            amount_display: formatCommissionAmount(paymentAmount),
+          };
+        });
+
         setCommissionPayouts(normalizedReadyRows);
+        setPaidCommissionHistory(mappedPaidHistory);
         setCommissionSummary({
           pending: normalizedAllRows.filter((row) => row.status === 'PENDING_PAYMENT').length,
           ready: normalizedAllRows.filter((row) => row.status === 'READY_TO_PAY').length,
@@ -534,6 +609,43 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
     return serviceCommissionRows.filter((row) => row.label.toLowerCase().includes(query) || row.key.toLowerCase().includes(query));
   }, [serviceCommissionRows, commissionSearch]);
 
+  const normalizeUuidValue = (value) => {
+    if (value === undefined || value === null) return null;
+    const text = String(value).trim();
+    return text ? text : null;
+  };
+
+  const normalizeInvoiceReference = (value) => {
+    const text = String(value ?? '').trim();
+    if (!text || text === 'null' || text === 'undefined') return 'Manual commission';
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text)) {
+      return 'Manual commission';
+    }
+    return text;
+  };
+
+  const formatCommissionAmount = (value) => `${Number(value || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} DA`;
+
+  const getCommissionInvoiceLabel = (row) => {
+    if (!row) return 'Manual commission';
+    const candidate = row.invoice_reference || row.reference || row.invoice_number || row.invoice_id || 'Manual commission';
+    return normalizeInvoiceReference(candidate);
+  };
+
+  const paidHistoryRows = useMemo(() => {
+    return (paidCommissionHistory || []).map((row) => ({
+      ...row,
+      payment_account: row.payment_account || '—',
+      payment_date: row.paid_at ? new Date(row.paid_at).toLocaleString(language === 'ar' ? 'ar-DZ' : 'en-GB', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      }) : '—',
+      invoice_reference: getCommissionInvoiceLabel(row),
+      amount_display: formatCommissionAmount(row.amount ?? row.total_amount ?? 0),
+      status_display: row.status || 'PAID',
+    }));
+  }, [language, paidCommissionHistory]);
+
   const filteredCommissionPayouts = useMemo(() => {
     const query = commissionSearch.trim().toLowerCase();
     return (commissionPayouts || []).filter((row) => {
@@ -548,11 +660,28 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
         !query ||
         String(row.notes || '').toLowerCase().includes(query) ||
         String(row.target_type || '').toLowerCase().includes(query) ||
-        String(row.amount || '').toLowerCase().includes(query);
+        String(row.amount || '').toLowerCase().includes(query) ||
+        String(getCommissionInvoiceLabel(row)).toLowerCase().includes(query);
 
       return matchesFilter && matchesQuery;
     });
   }, [commissionPayouts, commissionPayoutFilter, commissionSearch]);
+
+  useEffect(() => {
+    if (!commissionId || !paidCommissionHistory.length) {
+      return;
+    }
+
+    const match = paidCommissionHistory.find((row) => row.id === commissionId);
+    if (match) {
+      setSelectedPaidCommission({
+        ...match,
+        amount: Number(match.amount || match.total_amount || 0),
+        invoice_reference: getCommissionInvoiceLabel(match),
+        payment_account: match.payment_account || '—',
+      });
+    }
+  }, [commissionId, paidCommissionHistory]);
 
   const commissionCardPalette = {
     trip: 'border-amber-200 bg-amber-50/70',
@@ -725,7 +854,8 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
       return;
     }
 
-    const selectedAccountId = payoutAccountIds[commissionRow.id] || payoutAccountIds[commissionRow.target_id] || financialAccounts[0]?.id || null;
+    const rawSelectedAccountId = payoutAccountIds[commissionRow.id] || payoutAccountIds[commissionRow.target_id] || financialAccounts[0]?.id || null;
+    const selectedAccountId = normalizeUuidValue(rawSelectedAccountId);
     const amount = Number(commissionRow.amount || 0);
     if (!selectedAccountId || !amount || amount <= 0) {
       setError('Please choose a valid financial account before paying this commission.');
@@ -756,14 +886,14 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
 
       const { error: ledgerError } = await supabase.from('bank_entries').insert([
         {
-          account_id: selectedAccountId,
+          account_id: normalizeUuidValue(selectedAccountId),
           operation_date: new Date().toISOString(),
           description: commissionRow.notes || `Commission payout - ${commissionRow.target_type || 'agent'}`,
           operation_type: 'commission',
           third_party: commissionRow.third_party || 'Agent commission',
           debit: amount,
           credit: 0,
-          agent_id: userData?.user?.id || null,
+          agent_id: normalizeUuidValue(userData?.user?.id),
         },
       ]);
 
@@ -781,7 +911,7 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
       const { error: accountUpdateError } = await supabase
         .from('financial_accounts')
         .update({ current_balance: nextBalance })
-        .eq('id', selectedAccountId);
+        .eq('id', normalizeUuidValue(selectedAccountId));
 
       if (accountUpdateError) throw accountUpdateError;
 
@@ -1139,7 +1269,7 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
               <h3 className="mt-2 text-lg font-semibold text-brand-navy">{t.payCommission || 'Pay commission'}</h3>
             </div>
 
-            <div className="flex w-full max-w-md items-center gap-3">
+            <div className="flex w-full max-w-xl items-center gap-3">
               <div className="relative flex-1">
                 <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                 <input
@@ -1150,6 +1280,15 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
                   className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm text-brand-navy outline-none focus:border-brand-gold"
                 />
               </div>
+
+              <button
+                type="button"
+                onClick={() => setShowPaidHistory(true)}
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-brand-navy transition hover:border-brand-gold"
+              >
+                <History size={16} />
+                Paid history
+              </button>
 
               <select
                 value={commissionPayoutFilter}
@@ -1186,7 +1325,7 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
                           </span>
                         </div>
                         <p className="mt-1 text-xs text-slate-500">
-                          {row.target_type || 'service'} • {row.invoice_id ? `Invoice ${row.invoice_id}` : 'Manual commission'}
+                          {row.target_type || 'service'} • Invoice: <span className="font-medium text-brand-navy">{getCommissionInvoiceLabel(row)}</span>
                         </p>
                       </div>
 
@@ -1214,6 +1353,26 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
                             </option>
                           ))}
                         </select>
+
+                        <button
+                          type="button"
+                          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-brand-navy hover:border-brand-gold"
+                          onClick={() => {
+                            const nextRow = {
+                              ...row,
+                              invoice_reference: getCommissionInvoiceLabel(row),
+                              payment_account: row.payment_account || '—',
+                              agent_name: row.agent_name || 'Agent',
+                            };
+                            setSelectedPaidCommission(nextRow);
+                            navigate(`/settings/commission-payouts/${row.id}`);
+                          }}
+                        >
+                          <span className="inline-flex items-center gap-1.5">
+                            <Eye size={14} />
+                            Details
+                          </span>
+                        </button>
 
                         <button
                           type="button"
@@ -1380,6 +1539,145 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
                 </table>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {showPaidHistory && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-sm">
+          <div className="w-full max-w-5xl rounded-3xl border border-slate-200 bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-brand-gold">Paid commissions</p>
+                <h3 className="mt-1 text-xl font-semibold text-brand-navy">Commission payment history</h3>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowPaidHistory(false)}
+                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-brand-navy"
+                aria-label="Close paid commission history"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="max-h-[70vh] overflow-y-auto p-5">
+              {paidHistoryRows.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-sm text-slate-500">
+                  No paid commissions available yet.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-left text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
+                        <th className="px-3 py-3 font-semibold">Agent</th>
+                        <th className="px-3 py-3 font-semibold">Invoice</th>
+                        <th className="px-3 py-3 font-semibold">Payout date</th>
+                        <th className="px-3 py-3 font-semibold">Payment account</th>
+                        <th className="px-3 py-3 font-semibold text-right">Total</th>
+                        <th className="px-3 py-3 font-semibold">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paidHistoryRows.map((row) => (
+                        <tr key={row.id} className="border-b border-slate-200 last:border-0 hover:bg-slate-50">
+                          <td className="px-3 py-3 font-medium text-brand-navy">{row.agent_name || 'Agent'}</td>
+                          <td className="px-3 py-3 font-medium text-brand-navy">{row.invoice_reference || 'Manual commission'}</td>
+                          <td className="px-3 py-3 text-slate-600">{row.payment_date || '—'}</td>
+                          <td className="px-3 py-3 text-slate-600">{row.payment_account || '—'}</td>
+                          <td className="px-3 py-3 text-right font-mono font-semibold text-brand-navy">{row.amount_display || '0.00 DA'}</td>
+                          <td className="px-3 py-3">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const nextRow = {
+                                  ...row,
+                                  invoice_reference: row.invoice_reference || getCommissionInvoiceLabel(row),
+                                  payment_account: row.payment_account || '—',
+                                  agent_name: row.agent_name || 'Agent',
+                                };
+                                setSelectedPaidCommission(nextRow);
+                                setShowPaidHistory(false);
+                                navigate(`/settings/commission-payouts/${row.id}`);
+                              }}
+                              className="rounded-full bg-emerald-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-700"
+                            >
+                              {row.status_display || 'PAID'}
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {commissionId && selectedPaidCommission && (
+        <div className="space-y-6 rounded-3xl border border-slate-200 bg-brand-card p-6 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-brand-gold">Commission detail</p>
+              <h3 className="mt-2 text-2xl font-semibold text-brand-navy">Paid commission record</h3>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => navigate('/settings/commission-payouts')}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-brand-navy hover:border-brand-gold"
+            >
+              Back to payouts
+            </button>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Agent</div>
+              <div className="mt-2 text-base font-semibold text-brand-navy">{selectedPaidCommission.agent_name || 'Agent'}</div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Status</div>
+              <div className="mt-2 inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold uppercase tracking-[0.12em] text-emerald-700">
+                {selectedPaidCommission.status || 'PAID'}
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Invoice reference</div>
+              <div className="mt-2 font-mono text-sm font-semibold text-brand-navy">{selectedPaidCommission.invoice_reference || 'Manual commission'}</div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Amount</div>
+              <div className="mt-2 font-mono text-xl font-bold text-brand-navy">{Number(selectedPaidCommission.amount || 0).toFixed(2)} DA</div>
+            </div>
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Payout date</div>
+              <div className="mt-2 text-sm font-medium text-brand-navy">
+                {selectedPaidCommission.paid_at ? new Date(selectedPaidCommission.paid_at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Payment account</div>
+              <div className="mt-2 text-sm font-medium text-brand-navy">{selectedPaidCommission.payment_account || '—'}</div>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Notes</div>
+            <div className="mt-2 text-sm text-brand-navy">{selectedPaidCommission.notes || 'No additional notes.'}</div>
           </div>
         </div>
       )}
