@@ -31,6 +31,8 @@ import SupplierDetail from './pages/SupplierDetail';
 import Suppliers from './pages/Suppliers';
 import TaskDetail from './pages/TaskDetail';
 import Tasks from './pages/Tasks';
+import TaskManager from './pages/TaskManager';
+import ProposalBuilder from './pages/ProposalBuilder';
 import { supabase } from './lib/supabase';
 
 const labels = {
@@ -552,6 +554,8 @@ function App() {
               <Route path="/suppliers" element={<Suppliers language={language} ui={ui} />} />
               <Route path="/suppliers/:supplierId" element={<SupplierDetail />} />
               <Route path="/tasks" element={<Tasks language={language} ui={ui} />} />
+              <Route path="/task-manager" element={<TaskManager />} />
+              <Route path="/proposals/:requestId" element={<ProposalBuilder />} />
               <Route path="/tasks/:taskId" element={<TaskDetail />} />
               <Route path="/marketing" element={<Marketing language={language} ui={ui} />} />
               <Route path="/services" element={<Services language={language} ui={ui} />} />

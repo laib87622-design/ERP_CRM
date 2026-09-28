@@ -121,7 +121,7 @@ export default function Sidebar({ isOpen, ui, isDarkMode, language = 'en' }) {
       label: t.workflow,
       items: [
         { key: 'services', icon: Layers, path: '/services' },
-        { key: 'tasks', icon: CheckSquare, path: '/tasks' },
+        { key: 'taskManager', icon: Briefcase, path: '/task-manager', label: 'Task Manager' },
         { key: 'marketing', icon: Megaphone, path: '/marketing' },
       ],
     },
@@ -201,7 +201,7 @@ export default function Sidebar({ isOpen, ui, isDarkMode, language = 'en' }) {
                 {section.items.map((item) => {
                   const Icon = item.icon;
                   const isActive = location.pathname === item.path;
-                  const label = ui?.[item.key] || item.key;
+                  const label = item.label || ui?.[item.key] || item.key;
 
                   return (
                     <li key={item.key}>

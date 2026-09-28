@@ -303,9 +303,8 @@ export async function fetchAgencySettings() {
     const { data, error } = await supabase
       .from('agency_settings')
       .select('*')
-      .order('created_at', { ascending: false })
       .limit(1)
-      .maybeSingle();
+      .single();
 
     if (error) {
       return normalizeAgencySettings();
@@ -323,18 +322,29 @@ export async function saveAgencySettings(payload = {}) {
   }
 
   const nextPayload = normalizeAgencySettings(payload);
-  const nextId = nextPayload.id || crypto.randomUUID();
+
+  const { data: existingRow, error: fetchError } = await supabase
+    .from('agency_settings')
+    .select('id')
+    .limit(1)
+    .maybeSingle();
+
+  if (fetchError) {
+    throw fetchError;
+  }
+
+  if (!existingRow?.id) {
+    throw new Error('No active agency settings row was found. This table is intentionally single-row only.');
+  }
 
   const { data, error } = await supabase
     .from('agency_settings')
-    .upsert(
-      [{
-        ...nextPayload,
-        id: nextId,
-        created_at: nextPayload.created_at || new Date().toISOString(),
-      }],
-      { onConflict: 'id' }
-    )
+    .update({
+      ...nextPayload,
+      id: existingRow.id,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', existingRow.id)
     .select()
     .single();
 

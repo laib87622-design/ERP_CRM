@@ -420,30 +420,30 @@ export async function openInvoicePdf(invoice, client = null) {
               </div>
 
               <div class="invoice-meta">
-                <div class="tiny-tag">Invoice / فاتورة</div>
+                <div class="tiny-tag">FACTURE</div>
                 <h2 class="invoice-number">#${invoiceNumber}</h2>
-                <div class="invoice-date">Date / التاريخ: ${formatDate(issueDate)}</div>
+                <div class="invoice-date">Date: ${formatDate(issueDate)}</div>
                 <div class="status-pill">${invoice?.status || 'pending'}</div>
               </div>
             </div>
 
             <div class="info-grid">
               <div class="card">
-                <h3 class="card-title">Bill to / العميل</h3>
+                <h3 class="card-title">FACTURÉ À</h3>
                 <p><strong>${clientName}</strong></p>
-                <p>Ref / المرجع: ${clientReference}</p>
+                <p>Réf: ${clientReference}</p>
                 <p>Email: ${clientEmail}</p>
-                <p>Phone / الهاتف: ${clientPhone}</p>
+                <p>Téléphone: ${clientPhone}</p>
               </div>
 
               <div class="card">
-                <h3 class="card-title">Agency / الوكالة</h3>
+                <h3 class="card-title">AGENCE</h3>
                 <p><strong>${agencyName}</strong></p>
                 <p>${agencyAddress}</p>
-                <p>Phone / الهاتف: ${agencyPhone}</p>
+                <p>Téléphone: ${agencyPhone}</p>
                 <p>Email: ${agencyEmail}</p>
-                <p>RC / السجل التجاري: ${agency?.rc_number || '—'}</p>
-                <p>NIF / الرقم الضريبي: ${agency?.nif || '—'}</p>
+                <p>RC: ${agency?.rc_number || '—'}</p>
+                <p>NIF: ${agency?.nif || '—'}</p>
               </div>
             </div>
 
@@ -451,11 +451,11 @@ export async function openInvoicePdf(invoice, client = null) {
               <table>
                 <thead>
                   <tr>
-                    <th>Service / الخدمة</th>
-                    <th>Selling price / سعر البيع</th>
-                    <th>TVA rate / معدل الضريبة</th>
-                    <th>TVA amount / قيمة الضريبة</th>
-                    <th>Line total / الإجمالي</th>
+                    <th>SERVICE</th>
+                    <th>PRIX UNITAIRE</th>
+                    <th>TAUX TVA</th>
+                    <th>MONTANT TVA</th>
+                    <th>TOTAL LIGNE</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -467,23 +467,23 @@ export async function openInvoicePdf(invoice, client = null) {
             <div class="totals">
               <div class="totals-box">
                 <div class="totals-row">
-                  <span class="label">Subtotal / المجموع</span>
+                  <span class="label">Sous-total</span>
                   <span>${formatCurrencyDzd(subtotal)}</span>
                 </div>
                 <div class="totals-row">
-                  <span class="label">TVA / الضريبة</span>
+                  <span class="label">TVA</span>
                   <span>${formatCurrencyDzd(tvaAmount)}</span>
                 </div>
                 <div class="totals-row">
-                  <span class="label">Total / الإجمالي</span>
+                  <span class="label">Total</span>
                   <span>${formatCurrencyDzd(grandTotal)}</span>
                 </div>
                 <div class="totals-row" style="background: #f8fafc; color: var(--navy);">
-                  <span class="label">Amount Paid / المدفوع</span>
+                  <span class="label">Montant Payé</span>
                   <span>${formatCurrencyDzd(amountPaid)}</span>
                 </div>
                 <div class="totals-row" style="background: #fff7ed; color: #9a5b00; font-weight: 700; border-top: 1px solid #fed7aa;">
-                  <span class="label">Balance Due / المتبقي</span>
+                  <span class="label">Reste à Payer</span>
                   <span>${formatCurrencyDzd(balanceDue)}</span>
                 </div>
               </div>
@@ -493,17 +493,22 @@ export async function openInvoicePdf(invoice, client = null) {
 
             <div class="footer">
               <div class="legal">
-                <strong>Legal note / ملاحظة قانونية</strong>
-                <p>Payment is due within 30 days from the invoice date. This document is valid as an official sales invoice. / يجب سداد المبلغ خلال 30 يومًا من تاريخ الفاتورة. هذا المستند صالح كفاتورة بيع رسمية.</p>
-                <p>Reference / المرجع: ${invoice?.reference || '—'}</p>
-                <p>Notes / ملاحظات: ${invoice?.note || '—'}</p>
+                <strong>Note légale</strong>
+                <p>Le paiement est exigible dans les 30 jours suivant la date de facturation. Ce document fait office de facture de vente officielle.</p>
+                ${invoice?.note ? `
+                  <div style="margin-top: 12px;">
+                    <strong>Notes :</strong>
+                    <p style="white-space: pre-wrap; margin-top: 6px;">${String(invoice.note).replace(/</g, '&lt;')}</p>
+                  </div>
+                ` : ''}
+                <p style="margin-top: 12px;">Réf: ${invoice?.reference || '—'}</p>
               </div>
 
               <div class="bank-box">
-                <h4>Bank details / تفاصيل البنك</h4>
-                <p><strong>Bank / البنك:</strong> ${agencyBankName}</p>
-                <p><strong>Account / الحساب:</strong> ${agencyBankAccount}</p>
-                <p><strong>IBAN / الآيبان:</strong> ${agencyIban}</p>
+                <h4>DÉTAILS BANCAIRES</h4>
+                <p><strong>Banque:</strong> ${agencyBankName}</p>
+                <p><strong>Compte:</strong> ${agencyBankAccount}</p>
+                <p><strong>IBAN:</strong> ${agencyIban}</p>
               </div>
             </div>
           </div>

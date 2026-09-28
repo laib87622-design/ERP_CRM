@@ -274,6 +274,7 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
   const commissionText = localizedCommissionLabels[language] || localizedCommissionLabels.en;
   const section = activeSection || 'agency';
   const [settings, setSettings] = useState(defaultAgencySettings);
+  const [settingsId, setSettingsId] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -311,12 +312,34 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
 
         if (userRole !== 'super_admin') {
           setSettings(defaultAgencySettings);
+          setSettingsId(null);
           setLoading(false);
           return;
         }
 
-        const data = await fetchAgencySettings();
-        setSettings(data);
+        if (!supabase) {
+          setSettings(defaultAgencySettings);
+          setSettingsId(null);
+          setLoading(false);
+          return;
+        }
+
+        const { data, error: settingsError } = await supabase
+          .from('agency_settings')
+          .select('*')
+          .limit(1)
+          .single();
+
+        if (settingsError) {
+          setSettings(defaultAgencySettings);
+          setSettingsId(null);
+          return;
+        }
+
+        if (data) {
+          setSettingsId(data.id);
+          setSettings({ ...defaultAgencySettings, ...data, commission_rules: data.commission_rules || defaultAgencySettings.commission_rules, package_type_descriptions: data.package_type_descriptions || defaultAgencySettings.package_type_descriptions });
+        }
       } catch (err) {
         setError(err.message || 'Unable to load agency settings.');
       } finally {
@@ -378,9 +401,20 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
       const userRole = await fetchCurrentRole();
       setRole(userRole);
 
-      if (userRole === 'super_admin') {
-        const data = await fetchAgencySettings();
-        setSettings(data);
+      if (userRole === 'super_admin' && supabase) {
+        const { data, error: settingsError } = await supabase
+          .from('agency_settings')
+          .select('*')
+          .limit(1)
+          .single();
+
+        if (!settingsError && data) {
+          setSettingsId(data.id);
+          setSettings({ ...defaultAgencySettings, ...data, commission_rules: data.commission_rules || defaultAgencySettings.commission_rules, package_type_descriptions: data.package_type_descriptions || defaultAgencySettings.package_type_descriptions });
+        } else {
+          setSettings(defaultAgencySettings);
+          setSettingsId(null);
+        }
       }
 
       await loadTeamMembers();
@@ -950,11 +984,26 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
       return;
     }
 
+    if (!settingsId) {
+      setError('No active agency settings row was found. Please ensure the singleton settings row exists before editing.');
+      return;
+    }
+
     try {
       setSaving(true);
       setError('');
-      const saved = await saveAgencySettings(settings);
-      setSettings(saved);
+
+      const { error: updateError } = await supabase
+        .from('agency_settings')
+        .update({
+          ...settings,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', settingsId);
+
+      if (updateError) throw updateError;
+
+      setSettings((prev) => ({ ...prev, updated_at: new Date().toISOString() }));
     } catch (err) {
       setError(err.message || 'Unable to save agency settings.');
     } finally {

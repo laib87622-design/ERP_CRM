@@ -181,6 +181,7 @@ export default function InvoiceDetail({ language = 'en' }) {
   const [financialAccounts, setFinancialAccounts] = useState([]);
   const [selectedAccountId, setSelectedAccountId] = useState('');
   const [agencySettings, setAgencySettings] = useState(null);
+  const [noteDraft, setNoteDraft] = useState('');
 
   useEffect(() => {
     const loadInvoice = async () => {
@@ -317,6 +318,7 @@ export default function InvoiceDetail({ language = 'en' }) {
 
         setPaymentType(resolvedPaymentType);
         setAmountPaid(resolvedAmountPaid);
+        setNoteDraft(data?.note || '');
         setInvoice({ ...data, invoiceLines });
       } catch (err) {
         setError(err.message || 'Unable to load invoice details.');
@@ -355,6 +357,21 @@ export default function InvoiceDetail({ language = 'en' }) {
       </div>
     );
   }
+
+  const handleSaveInvoiceNote = async () => {
+    if (!supabase || !invoice) return;
+
+    const nextNote = noteDraft.trim();
+
+    try {
+      const { error } = await supabase.from('invoices').update({ note: nextNote }).eq('id', invoice.id);
+      if (error) throw error;
+
+      setInvoice((prev) => ({ ...prev, note: nextNote }));
+    } catch (err) {
+      setError(err.message || 'Unable to save invoice note.');
+    }
+  };
 
   const statusClass = statusStyles[invoice.status?.toLowerCase()] || statusStyles.pending;
   const invoiceLines = invoice.invoiceLines || [];
@@ -688,18 +705,33 @@ export default function InvoiceDetail({ language = 'en' }) {
           )}
         </div>
 
-        {(invoice.note || invoice.is_template || invoice.reference) && (
-          <div className="mt-6 rounded-2xl border border-slate-200 bg-brand-surface p-4">
-            <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Invoice note / template</p>
-            {invoice.reference && <p className="mt-3 text-sm font-medium text-brand-navy">Reference: {invoice.reference}</p>}
-            {invoice.note ? <p className="mt-3 whitespace-pre-wrap text-sm leading-7 text-brand-navy">{invoice.note}</p> : <p className="mt-3 text-sm text-slate-500">No note recorded.</p>}
-            {invoice.is_template && (
-              <span className="mt-3 inline-flex rounded-full bg-brand-gold/20 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-brand-navy">
-                Template
-              </span>
-            )}
+        <div className="mt-6 rounded-2xl border border-slate-200 bg-brand-surface p-4">
+          <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Note de facture</p>
+          <textarea
+            value={noteDraft}
+            onChange={(event) => setNoteDraft(event.target.value)}
+            rows={4}
+            className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-brand-navy outline-none focus:border-brand-gold"
+            placeholder="Ajouter une note pour cette facture"
+          />
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <div className="text-xs text-slate-500">
+              {invoice.reference && `Réf: ${invoice.reference}`}
+              {invoice.is_template && (
+                <span className="ml-2 inline-flex rounded-full bg-brand-gold/20 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-brand-navy">
+                  Modèle
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={handleSaveInvoiceNote}
+              className="rounded-xl bg-brand-navy px-4 py-2 text-sm font-semibold text-white transition hover:bg-brand-gold hover:text-brand-navy"
+            >
+              Enregistrer la note
+            </button>
           </div>
-        )}
+        </div>
       </div>
     </div>
   );
