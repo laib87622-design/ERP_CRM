@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, FileText, Printer } from 'lucide-react';
-import airvoyLogo from '../assets/airvoy.jpeg';
 import { supabase } from '../lib/supabase';
 
 const emptyProposal = {
@@ -29,6 +28,8 @@ export default function ProposalBuilder({ request_id }) {
   const resolvedRequestId = request_id || requestId;
 
   const [request, setRequest] = useState(null);
+  const [agency, setAgency] = useState(null);
+  const [agencyLogoFailed, setAgencyLogoFailed] = useState(false);
   const [proposal, setProposal] = useState(emptyProposal);
   const [checklist, setChecklist] = useState([]);
   const [inclusions, setInclusions] = useState([]);
@@ -55,6 +56,27 @@ export default function ProposalBuilder({ request_id }) {
     const amount = Number.isFinite(value) ? value : 0;
     return `${new Intl.NumberFormat('fr-DZ', { maximumFractionDigits: 0 }).format(amount)} DA`;
   }, [proposal.total_price]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    const loadAgencyBranding = async () => {
+      if (!supabase) return;
+
+      const { data, error: agencyError } = await supabase
+        .from('agency_settings')
+        .select('agency_name, logo_url')
+        .limit(1)
+        .maybeSingle();
+
+      if (isActive && !agencyError && data) setAgency(data);
+    };
+
+    loadAgencyBranding();
+    return () => {
+      isActive = false;
+    };
+  }, []);
 
   useEffect(() => {
     const loadProposalData = async () => {
@@ -589,9 +611,20 @@ export default function ProposalBuilder({ request_id }) {
             <div className="border-b border-slate-200 bg-gradient-to-r from-[#0f172a] via-[#13213c] to-[#1b2d4a] p-6 text-white print:bg-white print:p-4 print:text-slate-900">
               <div className="flex items-center justify-between gap-4 print:items-start">
                 <div className="flex items-center gap-4">
-                  <img src={airvoyLogo} alt="Airvoy logo" className="h-16 w-16 rounded-2xl border border-white/20 object-cover shadow-md" />
+                  {agency?.logo_url && !agencyLogoFailed ? (
+                    <img
+                      src={agency.logo_url}
+                      alt={`${agency.agency_name || 'Agency'} logo`}
+                      onError={() => setAgencyLogoFailed(true)}
+                      className="h-16 w-16 rounded-2xl border border-white/20 bg-white p-2 object-contain shadow-md"
+                    />
+                  ) : (
+                    <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-white/20 bg-white font-bold text-slate-900 shadow-md">
+                      {(agency?.agency_name || 'A').charAt(0).toUpperCase()}
+                    </div>
+                  )}
                   <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.28em] text-brand-gold">AIRVOY</p>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.28em] text-brand-gold">{agency?.agency_name || 'AGENCY'}</p>
                     <h2 className="mt-1 font-serif text-3xl text-white print:text-brand-navy">Travel Proposal</h2>
                   </div>
                 </div>
@@ -724,7 +757,7 @@ export default function ProposalBuilder({ request_id }) {
               <div className="flex items-end justify-between gap-4 border-t border-slate-200 pt-4 print:border-t print:pt-4">
                 <div>
                   <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Prepared By</div>
-                  <div className="mt-2 text-sm font-semibold text-brand-navy">AIRVOY Travel & Visa Services</div>
+                  <div className="mt-2 text-sm font-semibold text-brand-navy">{agency?.agency_name || 'Travel & Visa Services'}</div>
                 </div>
                 <div className="text-right">
                   <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-500">Signature</div>

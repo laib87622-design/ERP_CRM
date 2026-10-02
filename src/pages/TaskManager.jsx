@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FileText, PencilLine, Plus, Trash2, X, Upload, CheckCircle2, Clock3, Sparkles } from 'lucide-react';
 import { supabase } from '../lib/supabase';
@@ -59,7 +59,20 @@ const formatDate = (value) => {
 export default function TaskManager() {
   const navigate = useNavigate();
   const [requests, setRequests] = useState([]);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [canViewAll, setCanViewAll] = useState(false);
   const [agents, setAgents] = useState([]);
+  const [selectedAgentFilter, setSelectedAgentFilter] = useState('ALL');
+  const [filters, setFilters] = useState({
+    client: '',
+    destination: '',
+    service: '',
+    status: '',
+    budget: '',
+    endDate: '',
+  });
+  const [editingNoteId, setEditingNoteId] = useState(null);
+  const [tempNote, setTempNote] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -92,34 +105,38 @@ export default function TaskManager() {
   const uniqueServices = [...new Set(requests.map((request) => request.service_type).filter(Boolean))];
   const uniqueSources = [...new Set(requests.map((request) => request.source_of_request).filter(Boolean))];
 
-  const loadAgents = async () => {
-    try {
-      if (!supabase) {
-        setAgents([
-          { id: 'Sales Agent', full_name: 'Sales Agent' },
-          { id: 'Operations Manager', full_name: 'Operations Manager' },
-          { id: 'Support Team', full_name: 'Support Team' },
-        ]);
-        return;
-      }
-
-      const { data, error: agentsError } = await supabase
-        .from('profiles')
-        .select('id, full_name')
-        .order('full_name', { ascending: true });
-
-      if (agentsError) throw agentsError;
-      setAgents((data || []).map((agent) => ({ id: agent.id, full_name: agent.full_name || 'Agent' })));
-    } catch (loadError) {
-      setAgents([
-        { id: 'Sales Agent', full_name: 'Sales Agent' },
-        { id: 'Operations Manager', full_name: 'Operations Manager' },
-        { id: 'Support Team', full_name: 'Support Team' },
-      ]);
-    }
+  const handleFilterChange = (event) => {
+    const { name, value } = event.target;
+    setFilters((previousFilters) => ({ ...previousFilters, [name]: value }));
   };
 
-  const loadRequests = async () => {
+  const filteredRequests = useMemo(() => requests.filter((request) => {
+    const matchesClient = String(request.client_name || '').toLowerCase().includes(filters.client.toLowerCase());
+    const matchesDestination = String(request.destination || '').toLowerCase().includes(filters.destination.toLowerCase());
+    const matchesService = String(request.service_type || '').toLowerCase().includes(filters.service.toLowerCase());
+    const matchesStatus = !filters.status || String(request.order_status || '').toLowerCase() === filters.status.toLowerCase();
+    const matchesBudget = String(request.budget ?? '').includes(filters.budget);
+    const matchesEndDate = !filters.endDate || String(request.end_date || '').split('T')[0] === filters.endDate;
+
+    return matchesClient && matchesDestination && matchesService && matchesStatus && matchesBudget && matchesEndDate;
+  }), [requests, filters]);
+
+  const loadAgents = async () => {
+    if (!supabase) {
+      setAgents([]);
+      return;
+    }
+
+    const { data, error: agentsError } = await supabase
+      .from('profiles')
+      .select('id, full_name')
+      .order('full_name', { ascending: true });
+
+    if (agentsError) throw agentsError;
+    setAgents((data || []).map((agent) => ({ id: agent.id, full_name: agent.full_name || 'Agent' })));
+  };
+
+  const loadRequests = useCallback(async (userId, allowAll, agentFilter) => {
     try {
       setLoading(true);
       setError('');
@@ -129,10 +146,23 @@ export default function TaskManager() {
         return;
       }
 
-      const { data, error: requestsError } = await supabase
+      if (!userId) {
+        setRequests([]);
+        return;
+      }
+
+      let query = supabase
         .from('client_requests')
         .select('*')
         .order('created_at', { ascending: false });
+
+      if (!allowAll) {
+        query = query.eq('agent_id', userId);
+      } else if (agentFilter !== 'ALL') {
+        query = query.eq('agent_id', agentFilter);
+      }
+
+      const { data, error: requestsError } = await query;
 
       if (requestsError) throw requestsError;
       setRequests(data || []);
@@ -142,12 +172,80 @@ export default function TaskManager() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    loadAgents();
-    loadRequests();
+    let isActive = true;
+
+    const loadUserAccess = async () => {
+      if (!supabase) {
+        setError('Supabase is not configured yet.');
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const { data: userData, error: userError } = await supabase.auth.getUser();
+        if (userError) throw userError;
+        const user = userData?.user;
+        if (!user) {
+          setCurrentUser(null);
+          setLoading(false);
+          return;
+        }
+
+        const [{ data: profile, error: profileError }] = await Promise.all([
+          supabase.from('profiles').select('role, permissions').eq('id', user.id).maybeSingle(),
+          loadAgents(),
+        ]);
+
+        if (profileError) throw profileError;
+        if (!isActive) return;
+
+        const allowAll = profile?.role === 'super_admin'
+          || Boolean(profile?.permissions?.finance && profile?.permissions?.settings);
+        setCurrentUser({ ...user, role: profile?.role || 'viewer', permissions: profile?.permissions || {} });
+        setCanViewAll(allowAll);
+      } catch (loadError) {
+        if (!isActive) return;
+        setError(loadError.message || 'Unable to load task access.');
+        setCurrentUser(null);
+        setCanViewAll(false);
+        setLoading(false);
+      }
+    };
+
+    loadUserAccess();
+    return () => {
+      isActive = false;
+    };
   }, []);
+
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    loadRequests(currentUser.id, canViewAll, selectedAgentFilter);
+  }, [currentUser?.id, canViewAll, selectedAgentFilter, loadRequests]);
+
+  const handleSaveNote = async (taskId) => {
+    if (!supabase || !taskId) return;
+
+    try {
+      const { error: noteError } = await supabase
+        .from('client_requests')
+        .update({ note: tempNote })
+        .eq('id', taskId);
+
+      if (noteError) throw noteError;
+
+      setRequests((previousRequests) => previousRequests.map((request) => (
+        request.id === taskId ? { ...request, note: tempNote } : request
+      )));
+      setEditingNoteId(null);
+      setTempNote('');
+    } catch (saveError) {
+      setError(saveError.message || 'Unable to save note.');
+    }
+  };
 
   const handleFieldChange = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -391,6 +489,69 @@ export default function TaskManager() {
         </div>
       )}
 
+      <div className={`grid grid-cols-2 gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-3 ${canViewAll ? 'xl:grid-cols-7' : 'xl:grid-cols-6'}`}>
+        <input
+          type="text"
+          name="client"
+          placeholder="Filter Client..."
+          value={filters.client}
+          onChange={handleFilterChange}
+          className="min-w-0 rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-brand-gold focus:ring-2 focus:ring-amber-500/20"
+        />
+        <input
+          type="date"
+          name="endDate"
+          value={filters.endDate}
+          onChange={handleFilterChange}
+          aria-label="Filter by end date"
+          className="min-w-0 rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-600 outline-none focus:border-brand-gold focus:ring-2 focus:ring-amber-500/20"
+        />
+        <input
+          type="text"
+          name="destination"
+          placeholder="Filter Destination..."
+          value={filters.destination}
+          onChange={handleFilterChange}
+          className="min-w-0 rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-brand-gold focus:ring-2 focus:ring-amber-500/20"
+        />
+        <input
+          type="text"
+          name="service"
+          placeholder="Filter Service..."
+          value={filters.service}
+          onChange={handleFilterChange}
+          className="min-w-0 rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-brand-gold focus:ring-2 focus:ring-amber-500/20"
+        />
+        <input
+          type="number"
+          name="budget"
+          placeholder="Filter Budget..."
+          value={filters.budget}
+          onChange={handleFilterChange}
+          className="min-w-0 rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-brand-gold focus:ring-2 focus:ring-amber-500/20"
+        />
+        <select
+          name="status"
+          value={filters.status}
+          onChange={handleFilterChange}
+          className="min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-brand-gold focus:ring-2 focus:ring-amber-500/20"
+        >
+          <option value="">All Statuses</option>
+          {statusOptions.map((status) => <option key={status} value={status}>{status}</option>)}
+        </select>
+        {canViewAll && (
+          <select
+            value={selectedAgentFilter}
+            onChange={(event) => setSelectedAgentFilter(event.target.value)}
+            className="min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-brand-gold focus:ring-2 focus:ring-amber-500/20"
+            aria-label="Filter tasks by agent"
+          >
+            <option value="ALL">All Agents</option>
+            {agents.map((agent) => <option key={agent.id} value={agent.id}>{agent.full_name}</option>)}
+          </select>
+        )}
+      </div>
+
       <div className="overflow-hidden rounded-3xl border border-slate-200 bg-brand-card shadow-sm">
         <div className="overflow-x-auto">
           <table className="min-w-full text-left text-sm">
@@ -402,24 +563,25 @@ export default function TaskManager() {
                 <th className="px-4 py-3 font-semibold">Budget</th>
                 <th className="px-4 py-3 font-semibold">Status</th>
                 <th className="px-4 py-3 font-semibold">End Date</th>
+                <th className="px-4 py-3 font-semibold">Note</th>
                 <th className="px-4 py-3 font-semibold text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="7" className="px-4 py-12 text-center text-slate-500">
+                  <td colSpan="8" className="px-4 py-12 text-center text-slate-500">
                     Loading requests...
                   </td>
                 </tr>
-              ) : requests.length === 0 ? (
+              ) : filteredRequests.length === 0 ? (
                 <tr>
-                  <td colSpan="7" className="px-4 py-12 text-center text-slate-500">
-                    No requests found.
+                  <td colSpan="8" className="px-4 py-12 text-center text-slate-500">
+                    {requests.length === 0 ? 'No requests found.' : 'No requests match these filters.'}
                   </td>
                 </tr>
               ) : (
-                requests.map((request) => (
+                filteredRequests.map((request) => (
                   <tr key={request.id} className="border-t border-slate-200 align-top">
                     <td className="px-4 py-4">
                       <div className="font-semibold text-brand-navy">{request.client_name || '—'}</div>
@@ -442,6 +604,30 @@ export default function TaskManager() {
                       </span>
                     </td>
                     <td className="px-4 py-4 text-slate-600">{formatDate(request.end_date)}</td>
+                    <td className="max-w-xs px-4 py-3 align-top text-sm">
+                      {editingNoteId === request.id ? (
+                        <textarea
+                          autoFocus
+                          value={tempNote}
+                          onChange={(event) => setTempNote(event.target.value)}
+                          onBlur={() => handleSaveNote(request.id)}
+                          rows={3}
+                          className="w-full min-w-40 rounded-md border border-slate-200 p-2 text-slate-700 shadow-sm outline-none focus:border-brand-gold focus:ring-2 focus:ring-amber-500/20"
+                          aria-label={`Edit note for ${request.client_name || 'request'}`}
+                        />
+                      ) : (
+                        <div
+                          onClick={() => {
+                            setEditingNoteId(request.id);
+                            setTempNote(request.note || '');
+                          }}
+                          className="group min-h-10 cursor-text truncate rounded-md p-2 text-slate-600 transition-all hover:whitespace-normal hover:bg-slate-50"
+                          title="Click to edit note"
+                        >
+                          {request.note || <span className="italic text-slate-400">Click to add note...</span>}
+                        </div>
+                      )}
+                    </td>
                     <td className="px-4 py-4">
                       <div className="flex justify-end gap-2">
                         <button

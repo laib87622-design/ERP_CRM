@@ -1,15 +1,37 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Mail, Lock, Plane, ArrowRight } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import airvoyLogo from '../assets/airvoy.jpeg';
 
 export default function Login({ language = 'en', setLanguage }) {
+  const [agency, setAgency] = useState(null);
+  const [logoLoadFailed, setLogoLoadFailed] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
   const isArabic = language === 'ar';
+
+  useEffect(() => {
+    let isActive = true;
+
+    const fetchAgency = async () => {
+      if (!supabase) return;
+
+      const { data, error: fetchError } = await supabase
+        .from('agency_settings')
+        .select('agency_name, logo_url')
+        .limit(1)
+        .maybeSingle();
+
+      if (isActive && !fetchError && data) setAgency(data);
+    };
+
+    fetchAgency();
+    return () => {
+      isActive = false;
+    };
+  }, []);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -43,12 +65,22 @@ export default function Login({ language = 'en', setLanguage }) {
         <div className="pointer-events-none absolute -bottom-24 -right-16 h-72 w-72 rounded-full border border-amber-200/15" aria-hidden="true" />
         <div className="pointer-events-none absolute -bottom-10 -right-2 h-52 w-52 rounded-full border border-amber-200/10" aria-hidden="true" />
 
-        <div className="relative flex items-center gap-3">
-          <img src={airvoyLogo} alt="Airvoy" className="h-11 w-11 rounded-lg border border-white/15 object-cover" />
-          <div>
-            <p className="text-sm font-bold uppercase tracking-[0.18em] text-white">AIRVOY</p>
-            <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-200">Travel services</p>
-          </div>
+        <div className="relative mb-8 flex items-center gap-3">
+          {agency?.logo_url && !logoLoadFailed ? (
+            <img
+              src={agency.logo_url}
+              alt={`${agency.agency_name || 'Agency'} logo`}
+              onError={() => setLogoLoadFailed(true)}
+              className="h-12 w-12 rounded-md bg-white p-1 object-contain"
+            />
+          ) : (
+            <div className="flex h-12 w-12 items-center justify-center rounded-md bg-white/20 text-xl font-bold text-white">
+              {(agency?.agency_name || 'A').charAt(0).toUpperCase()}
+            </div>
+          )}
+          <span className="max-w-[min(60vw,24rem)] truncate text-2xl font-bold uppercase tracking-widest text-white">
+            {agency?.agency_name || 'ERP SYSTEM'}
+          </span>
         </div>
 
         <div className="relative max-w-xl py-12 md:py-0">

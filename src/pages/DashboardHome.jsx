@@ -1,35 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  AlertTriangle,
   ArrowUpRight,
   BriefcaseBusiness,
-  Building2,
-  CreditCard,
-  FileText,
   Package,
   Plus,
-  Smartphone,
   Users,
-  Wallet,
+  X,
 } from 'lucide-react';
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
 import { supabase } from '../lib/supabase';
-import { formatCurrency } from '../lib/currency';
-
-const accountMeta = {
-  cash: { label: 'Cash', icon: Wallet, border: 'border-emerald-500', bg: 'bg-emerald-50', text: 'text-emerald-700' },
-  credit_card: { label: 'Credit Card', icon: CreditCard, border: 'border-amber-500', bg: 'bg-amber-50', text: 'text-amber-700' },
-  baridimob: { label: 'BaridiMob', icon: Smartphone, border: 'border-sky-500', bg: 'bg-sky-50', text: 'text-sky-700' },
-};
 
 const priorityStyles = {
   High: 'bg-red-100 text-red-700',
@@ -44,36 +23,6 @@ const statusStyles = {
   cancelled: 'bg-slate-200 text-slate-700',
 };
 
-const monthFormatter = new Intl.DateTimeFormat('en-US', { month: 'short' });
-
-const getMonthKey = (date) => {
-  const safeDate = new Date(date);
-  return `${safeDate.getFullYear()}-${String(safeDate.getMonth() + 1).padStart(2, '0')}`;
-};
-
-const buildCashBasisRevenueTrend = (entries = []) => {
-  const monthlyData = Array.from({ length: 12 }, (_, index) => ({
-    name: new Date(0, index).toLocaleString('default', { month: 'short' }),
-    Total: 0,
-  }));
-
-  entries.forEach((entry) => {
-    const dateValue = new Date(entry.operation_date);
-    if (Number.isNaN(dateValue.getTime())) return;
-
-    const monthIndex = dateValue.getMonth();
-    monthlyData[monthIndex].Total += Number(entry.credit || 0);
-  });
-
-  return monthlyData;
-};
-
-const formatDeltaText = (value) => {
-  const safeValue = Number(value) || 0;
-  const sign = safeValue > 0 ? '+' : safeValue < 0 ? '-' : '';
-  return `${sign}${Math.abs(safeValue)} this month`;
-};
-
 const getStatusBadgeClass = (status) => {
   const normalized = (status || '').toString().toLowerCase();
   if (normalized === 'confirmed') return statusStyles.confirmed;
@@ -86,59 +35,37 @@ export default function DashboardHome({ language = 'en' }) {
   const labels = {
     en: {
       overview: 'Overview',
-      revenue: 'Monthly revenue',
-      treasury: 'Treasury snapshot',
       recentBookings: 'Recent bookings',
       pendingTasks: 'Pending tasks',
-      supplierDebts: 'Top supplier debts',
       quickActions: 'Quick actions',
       newClient: 'New Client',
       newBooking: 'New Booking',
       newPackage: 'New Package',
-      newSupplier: 'New Supplier',
       clients: 'Clients',
       bookings: 'Bookings',
       packages: 'Packages',
-      invoices: 'Invoices',
-      suppliers: 'Suppliers',
-      totalDebt: 'Total Supplier Debt',
-      overdue: 'Overdue bookings',
       status: 'Status',
-      sellingPrice: 'Selling Price',
       finishDate: 'Finish Date',
       noTasks: 'No pending tasks',
-      noSupplierDebts: 'No supplier debt data',
       noBookings: 'No recent bookings',
       viewAll: 'View all',
-      open: 'Open',
     },
     ar: {
       overview: 'نظرة عامة',
-      revenue: 'الإيرادات الشهرية',
-      treasury: 'ملف الخزينة',
       recentBookings: 'أحدث الحجوزات',
       pendingTasks: 'المهام المعلقة',
-      supplierDebts: 'أعلى ديون الموردين',
       quickActions: 'إجراءات سريعة',
       newClient: 'عميل جديد',
       newBooking: 'حجز جديد',
       newPackage: 'باقة جديدة',
-      newSupplier: 'مورد جديد',
       clients: 'العملاء',
       bookings: 'الحجوزات',
       packages: 'الباقات',
-      invoices: 'الفواتير',
-      suppliers: 'الموردون',
-      totalDebt: 'إجمالي ديون الموردين',
-      overdue: 'الحجوزات المتأخرة',
       status: 'الحالة',
-      sellingPrice: 'السعر',
       finishDate: 'تاريخ الإنجاز',
       noTasks: 'لا توجد مهام معلقة',
-      noSupplierDebts: 'لا توجد ديون للموردين',
       noBookings: 'لا توجد حجوزات حديثة',
       viewAll: 'عرض الكل',
-      open: 'فتح',
     },
   };
 
@@ -149,17 +76,11 @@ export default function DashboardHome({ language = 'en' }) {
     clients: 0,
     bookings: 0,
     packages: 0,
-    invoices: 0,
-    suppliers: 0,
-    totalSupplierDebt: 0,
     overdueBookings: 0,
-    revenue: 0,
   });
-  const [revenueTrend, setRevenueTrend] = useState([]);
-  const [accounts, setAccounts] = useState([]);
   const [recentBookings, setRecentBookings] = useState([]);
   const [pendingTasks, setPendingTasks] = useState([]);
-  const [supplierDebts, setSupplierDebts] = useState([]);
+  const [platformLinks, setPlatformLinks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -168,9 +89,6 @@ export default function DashboardHome({ language = 'en' }) {
       { key: 'clients', label: t.clients, icon: Users, accent: 'bg-slate-100 text-slate-700' },
       { key: 'bookings', label: t.bookings, icon: BriefcaseBusiness, accent: 'bg-sky-100 text-sky-700' },
       { key: 'packages', label: t.packages, icon: Package, accent: 'bg-emerald-100 text-emerald-700' },
-      { key: 'invoices', label: t.invoices, icon: FileText, accent: 'bg-amber-100 text-amber-700' },
-      { key: 'suppliers', label: t.suppliers, icon: Building2, accent: 'bg-rose-100 text-rose-700' },
-      { key: 'totalSupplierDebt', label: t.totalDebt, icon: ArrowUpRight, accent: 'bg-red-100 text-red-700' },
     ],
     [t]
   );
@@ -179,8 +97,79 @@ export default function DashboardHome({ language = 'en' }) {
     { key: 'clients', label: t.newClient, route: '/clients', filled: true },
     { key: 'bookings', label: t.newBooking, route: '/bookings', filled: false },
     { key: 'packages', label: t.newPackage, route: '/packages', filled: false },
-    { key: 'suppliers', label: t.newSupplier, route: '/suppliers', filled: false },
   ];
+
+  const fetchLinks = useCallback(async () => {
+    if (!supabase) return;
+
+    const { data, error: fetchError } = await supabase
+      .from('agency_links')
+      .select('*')
+      .order('created_at', { ascending: true });
+
+    if (fetchError) {
+      setError(fetchError.message || 'Unable to load platform links.');
+      return;
+    }
+
+    setPlatformLinks(data || []);
+  }, []);
+
+  useEffect(() => {
+    fetchLinks();
+  }, [fetchLinks]);
+
+  const handleAddLink = async () => {
+    if (!supabase) {
+      setError('Supabase is not configured.');
+      return;
+    }
+
+    const nameInput = window.prompt('Enter platform name (e.g., Booking.com):');
+    const name = nameInput?.trim();
+    if (!name) return;
+
+    const urlInput = window.prompt('Enter platform URL (e.g., https://booking.com):');
+    const rawUrl = urlInput?.trim();
+    if (!rawUrl) return;
+
+    let url;
+    try {
+      url = new URL(rawUrl);
+      if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Only HTTP and HTTPS links are allowed.');
+    } catch (urlError) {
+      setError(urlError.message === 'Only HTTP and HTTPS links are allowed.' ? urlError.message : 'Enter a valid platform URL beginning with https://.');
+      return;
+    }
+
+    const { error: insertError } = await supabase.from('agency_links').insert({ name, url: url.toString() });
+    if (insertError) {
+      setError(insertError.message || 'Unable to add platform link.');
+      return;
+    }
+
+    setError('');
+    await fetchLinks();
+  };
+
+  const handleDeleteLink = async (id, event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!supabase) {
+      setError('Supabase is not configured.');
+      return;
+    }
+    if (!window.confirm('Delete this link?')) return;
+
+    const { error: deleteError } = await supabase.from('agency_links').delete().eq('id', id);
+    if (deleteError) {
+      setError(deleteError.message || 'Unable to delete platform link.');
+      return;
+    }
+
+    setError('');
+    await fetchLinks();
+  };
 
   useEffect(() => {
     const fetchDashboardData = async () => {
@@ -193,35 +182,20 @@ export default function DashboardHome({ language = 'en' }) {
           return;
         }
 
-        const currentYear = new Date().getFullYear();
-        const [clientsRes, bookingsRes, packagesRes, invoicesRes, suppliersRes, accountsRes, recentBookingsRes, tasksRes, bankEntriesRes] = await Promise.all([
+        const [clientsRes, bookingsRes, packagesRes, recentBookingsRes, tasksRes] = await Promise.all([
           supabase.from('clients').select('id, created_at'),
-          supabase.from('bookings').select('id, status, finish_date, selling_price, created_at, clients(full_name)'),
+          supabase.from('bookings').select('id, status, finish_date, created_at, clients(full_name)'),
           supabase.from('package_templates').select('id, created_at'),
-          supabase.from('invoices').select('id, grand_total, created_at, paid_at, status'),
-          supabase.from('suppliers').select('id, name, supplier_debt'),
-          supabase.from('financial_accounts').select('id, label, currency, current_balance, bank_name').order('label', { ascending: true }),
-          supabase.from('bookings').select('id, status, finish_date, selling_price, clients(full_name)').order('id', { ascending: false }).limit(5),
+          supabase.from('bookings').select('id, status, finish_date, clients(full_name)').order('id', { ascending: false }).limit(5),
           supabase.from('tasks').select('id, title, status, priority').in('status', ['todo', 'in_progress']).order('id', { ascending: false }).limit(4),
-          supabase
-            .from('bank_entries')
-            .select('operation_date, credit')
-            .gt('credit', 0)
-            .gte('operation_date', `${currentYear}-01-01T00:00:00Z`)
-            .lte('operation_date', `${currentYear}-12-31T23:59:59Z`),
         ]);
 
         if (clientsRes.error) throw clientsRes.error;
         if (bookingsRes.error) throw bookingsRes.error;
         if (packagesRes.error) throw packagesRes.error;
-        if (invoicesRes.error) throw invoicesRes.error;
-        if (suppliersRes.error) throw suppliersRes.error;
-        if (accountsRes.error) throw accountsRes.error;
         if (recentBookingsRes.error) throw recentBookingsRes.error;
         if (tasksRes.error) throw tasksRes.error;
-        if (bankEntriesRes.error) throw bankEntriesRes.error;
 
-        const totalRevenue = (bankEntriesRes.data || []).reduce((sum, entry) => sum + Number(entry.credit || 0), 0);
         const overdueBookings = (bookingsRes.data || []).filter((booking) => {
           if (!booking.finish_date || booking.status === 'cancelled') return false;
           const finishDate = new Date(`${booking.finish_date}T00:00:00`);
@@ -242,45 +216,19 @@ export default function DashboardHome({ language = 'en' }) {
         const clientDelta = getMonthCount(clientsRes.data || [], currentMonth) - getMonthCount(clientsRes.data || [], previousMonth);
         const bookingDelta = getMonthCount(bookingsRes.data || [], currentMonth) - getMonthCount(bookingsRes.data || [], previousMonth);
         const packageDelta = getMonthCount(packagesRes.data || [], currentMonth) - getMonthCount(packagesRes.data || [], previousMonth);
-        const supplierDelta = getMonthCount(suppliersRes.data || [], currentMonth) - getMonthCount(suppliersRes.data || [], previousMonth);
-        const invoiceDelta = (invoicesRes.data || []).filter((invoice) => {
-          if (!invoice.created_at) return false;
-          const createdDate = new Date(invoice.created_at);
-          return createdDate.getFullYear() === currentMonth.getFullYear() && createdDate.getMonth() === currentMonth.getMonth();
-        }).reduce((sum, invoice) => sum + Number(invoice.grand_total || 0), 0) - (invoicesRes.data || []).filter((invoice) => {
-          if (!invoice.created_at) return false;
-          const createdDate = new Date(invoice.created_at);
-          return createdDate.getFullYear() === previousMonth.getFullYear() && createdDate.getMonth() === previousMonth.getMonth();
-        }).reduce((sum, invoice) => sum + Number(invoice.grand_total || 0), 0);
-
-        const totalSupplierDebt = (suppliersRes.data || []).reduce((sum, supplier) => sum + Number(supplier.supplier_debt || 0), 0);
 
         setStats({
           clients: clientsRes.data?.length || 0,
           bookings: bookingsRes.data?.length || 0,
           packages: packagesRes.data?.length || 0,
-          invoices: invoicesRes.data?.length || 0,
-          suppliers: suppliersRes.data?.length || 0,
-          totalSupplierDebt,
           overdueBookings,
-          revenue: totalRevenue,
           clientDelta,
           bookingDelta,
           packageDelta,
-          invoiceDelta,
-          supplierDelta,
         });
 
-        setRevenueTrend(buildCashBasisRevenueTrend(bankEntriesRes.data || []));
-        setAccounts((accountsRes.data || []).map((item) => ({
-          id: item.id,
-          label: item.label || item.bank_name || 'Account',
-          currency: item.currency || 'DZD',
-          current_balance: Number(item.current_balance || 0),
-        })));
         setRecentBookings((recentBookingsRes.data || []).slice(0, 5));
         setPendingTasks((tasksRes.data || []).slice(0, 4));
-        setSupplierDebts((suppliersRes.data || []).sort((a, b) => Number(b.supplier_debt || 0) - Number(a.supplier_debt || 0)).slice(0, 3));
       } catch (err) {
         setError(err.message || 'Unable to load dashboard data.');
       } finally {
@@ -296,15 +244,10 @@ export default function DashboardHome({ language = 'en' }) {
       clients: '/clients',
       bookings: '/bookings',
       packages: '/packages',
-      invoices: '/invoices',
-      suppliers: '/suppliers',
-      totalSupplierDebt: '/suppliers',
     };
 
     navigate(routes[key] || '/');
   };
-
-  const chartHeight = 260;
 
   return (
     <div className="space-y-6">
@@ -319,10 +262,9 @@ export default function DashboardHome({ language = 'en' }) {
         </div>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-6">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         {statCards.map(({ key, label, icon: Icon, accent }) => {
           const delta = stats[`${key}Delta`] ?? 0;
-          const cardValue = key === 'totalSupplierDebt' ? stats.totalSupplierDebt : stats[key] ?? 0;
           const isRedHighlight = key === 'bookings' && stats.overdueBookings > 0;
 
           return (
@@ -344,7 +286,7 @@ export default function DashboardHome({ language = 'en' }) {
               <div className="mt-5">
                 <p className="text-sm text-slate-500">{label}</p>
                 <p className="mt-2 font-mono text-2xl font-semibold text-brand-navy">
-                  {key === 'totalSupplierDebt' ? formatCurrency(cardValue) : cardValue}
+                  {stats[key] ?? 0}
                 </p>
               </div>
 
@@ -357,66 +299,7 @@ export default function DashboardHome({ language = 'en' }) {
         })}
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-[1.6fr_0.9fr]">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <h3 className="text-lg font-semibold text-brand-navy">{t.revenue}</h3>
-            <span className="font-mono text-sm text-brand-navy">{formatCurrency(stats.revenue)}</span>
-          </div>
-
-          <div className="h-[260px] w-full">
-            {!loading && revenueTrend.length > 0 ? (
-              <ResponsiveContainer width="100%" height={chartHeight}>
-                <BarChart data={revenueTrend} margin={{ top: 18, right: 10, left: 0, bottom: 8 }}>
-                  <CartesianGrid stroke="#e2e8f0" vertical={false} strokeDasharray="4 4" />
-                  <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#475569', fontSize: 12 }} />
-                  <YAxis axisLine={false} tickLine={false} tick={{ fill: '#475569', fontSize: 12 }} tickFormatter={(value) => `${Math.round(value / 1000)}k`} />
-                  <Tooltip
-                    formatter={(value) => [formatCurrency(value), 'Total']}
-                    labelStyle={{ color: '#0a1120', fontWeight: 600 }}
-                    contentStyle={{ borderRadius: 12, borderColor: '#e2e8f0', backgroundColor: '#fff' }}
-                  />
-                  <Bar dataKey="Total" fill="#c9a84c" radius={[8, 8, 0, 0]} maxBarSize={38} />
-                </BarChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="flex h-full items-center justify-center text-sm text-slate-500">{loading ? 'Loading revenue...' : 'No chart data available'}</div>
-            )}
-          </div>
-        </div>
-
-        <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h3 className="text-lg font-semibold text-brand-navy">{t.treasury}</h3>
-          <div className="space-y-4">
-            {accounts.length === 0 ? (
-              <p className="text-sm text-slate-500">No financial accounts set up yet.</p>
-            ) : (
-              accounts.map((account) => (
-                <div
-                  key={account.id}
-                  className="flex items-center justify-between rounded-xl border border-y border-r border-slate-100 border-l-4 border-[#c9a84c] bg-white p-4 shadow-sm"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="font-semibold text-slate-800">{account.label}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400">{t.open}</div>
-                    <div className="text-lg font-bold text-[#0a1120]">
-                      {new Intl.NumberFormat('fr-DZ', {
-                        style: 'currency',
-                        currency: account.currency || 'DZD',
-                        maximumFractionDigits: 0,
-                      }).format(account.current_balance || 0)}
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      </div>
-
-      <div className="grid gap-5 xl:grid-cols-[1.6fr_1fr]">
+      <div className="grid gap-5 lg:grid-cols-[1.5fr_1fr]">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-center justify-between gap-3">
             <h3 className="text-lg font-semibold text-brand-navy">{t.recentBookings}</h3>
@@ -434,7 +317,6 @@ export default function DashboardHome({ language = 'en' }) {
                   <tr>
                     <th className="px-3 py-3 font-medium">Client</th>
                     <th className="px-3 py-3 font-medium">{t.status}</th>
-                    <th className="px-3 py-3 font-medium">{t.sellingPrice}</th>
                     <th className="px-3 py-3 font-medium">{t.finishDate}</th>
                   </tr>
                 </thead>
@@ -447,7 +329,6 @@ export default function DashboardHome({ language = 'en' }) {
                           {String(booking.status || 'pending').replace(/(^\w|_\w)/g, (match) => match.replace('_', ' ').toUpperCase())}
                         </span>
                       </td>
-                      <td className="px-3 py-3 font-mono text-brand-navy">{formatCurrency(Number(booking.selling_price || 0))}</td>
                       <td className="px-3 py-3 text-slate-600">
                         {booking.finish_date ? new Date(`${booking.finish_date}T00:00:00`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
                       </td>
@@ -481,19 +362,46 @@ export default function DashboardHome({ language = 'en' }) {
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h3 className="text-lg font-semibold text-brand-navy">{t.supplierDebts}</h3>
-            <div className="mt-4 space-y-3">
-              {supplierDebts.length === 0 ? (
-                <p className="text-sm text-slate-500">{t.noSupplierDebts}</p>
-              ) : (
-                supplierDebts.map((supplier) => (
-                  <div key={supplier.id} className="flex items-center justify-between gap-3 rounded-xl border border-red-100 bg-red-50 px-3 py-2.5">
-                    <span className="text-sm font-medium text-brand-navy">{supplier.name}</span>
-                    <span className="font-mono text-sm font-semibold text-red-700">{formatCurrency(Number(supplier.supplier_debt || 0))}</span>
-                  </div>
-                ))
-              )}
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h3 className="text-lg font-semibold text-brand-navy">Quick Platforms</h3>
+              <button
+                type="button"
+                onClick={handleAddLink}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-brand-navy px-2.5 py-2 text-xs font-semibold text-white transition hover:bg-slate-800"
+              >
+                <Plus size={14} />
+                Add Platform
+              </button>
             </div>
+
+            {platformLinks.length === 0 ? (
+              <p className="text-sm text-slate-500">No platforms added yet.</p>
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                {platformLinks.map((link) => (
+                  <div key={link.id} className="flex min-w-0 items-center rounded-lg border border-slate-200 bg-slate-50 transition hover:border-brand-gold">
+                    <a
+                      href={link.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="min-w-0 flex-1 truncate px-3 py-2.5 text-sm font-medium text-brand-navy"
+                      title={link.name}
+                    >
+                      {link.name}
+                    </a>
+                    <button
+                      type="button"
+                      onClick={(event) => handleDeleteLink(link.id, event)}
+                      className="mr-1 rounded-md p-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-600"
+                      aria-label={`Delete ${link.name}`}
+                      title={`Delete ${link.name}`}
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>

@@ -16,6 +16,7 @@ const translations = {
     note: 'Note',
     totalLiquidity: 'Total Liquidity',
     totalSupplierDebt: 'Total Supplier Debt',
+    grossProfit: 'Gross Profit (Confirmed Bookings)',
     loading: 'Loading bank data...',
     noAccounts: 'No financial accounts match the current filters.',
     view: 'View',
@@ -42,6 +43,7 @@ const translations = {
     note: 'ملاحظة',
     totalLiquidity: 'إجمالي السيولة',
     totalSupplierDebt: 'إجمالي ديون الموردين',
+    grossProfit: 'إجمالي الربح (الحجوزات المؤكدة)',
     loading: 'جارٍ تحميل بيانات البنك...',
     noAccounts: 'لا توجد حسابات مالية تطابق المرشحات الحالية.',
     view: 'عرض',
@@ -66,6 +68,7 @@ const Bank = ({ language = 'en', role: initialRole = 'viewer' }) => {
   const [financialAccounts, setFinancialAccounts] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [recentBankEntries, setRecentBankEntries] = useState([]);
+  const [grossProfit, setGrossProfit] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -122,7 +125,7 @@ const Bank = ({ language = 'en', role: initialRole = 'viewer' }) => {
       setLoading(true);
       setError('');
 
-      const [financialAccountsRes, suppliersRes, bankEntriesRes] = await Promise.all([
+      const [financialAccountsRes, suppliersRes, bankEntriesRes, confirmedBookingsRes] = await Promise.all([
         supabase
           .from('financial_accounts')
           .select('id, label, currency, country, initial_balance, current_balance, bank_name, iban, swift_bic, created_at')
@@ -133,11 +136,16 @@ const Bank = ({ language = 'en', role: initialRole = 'viewer' }) => {
           .select('id, operation_date, description, third_party, debit, credit, account_id, financial_accounts(label)')
           .order('operation_date', { ascending: false })
           .limit(5),
+        supabase
+          .from('bookings')
+          .select('selling_price, cost_price')
+          .eq('status', 'confirmed'),
       ]);
 
       if (financialAccountsRes.error) throw financialAccountsRes.error;
       if (suppliersRes.error) throw suppliersRes.error;
       if (bankEntriesRes.error) throw bankEntriesRes.error;
+      if (confirmedBookingsRes.error) throw confirmedBookingsRes.error;
 
       setFinancialAccounts((financialAccountsRes.data || []).map((row) => ({
         ...row,
@@ -149,6 +157,11 @@ const Bank = ({ language = 'en', role: initialRole = 'viewer' }) => {
         ...entry,
         account_label: entry.financial_accounts?.label || 'Account',
       })));
+      setGrossProfit((confirmedBookingsRes.data || []).reduce((sum, booking) => {
+        const sellingPrice = parseFloat(booking.selling_price) || 0;
+        const costPrice = parseFloat(booking.cost_price) || 0;
+        return sum + sellingPrice - costPrice;
+      }, 0));
     } catch (err) {
       setError(err.message || 'Unable to load bank records.');
     } finally {
@@ -399,7 +412,7 @@ const Bank = ({ language = 'en', role: initialRole = 'viewer' }) => {
             currencyOptions={accountCurrencies}
           />
 
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
             <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 shadow-sm">
               <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700">{t.totalLiquidity}</p>
               <p className="mt-3 font-mono text-3xl font-bold text-emerald-700">{formatCurrency(totalLiquidity)}</p>
@@ -408,6 +421,11 @@ const Bank = ({ language = 'en', role: initialRole = 'viewer' }) => {
             <div className="rounded-2xl border border-red-200 bg-red-50 p-5 shadow-sm">
               <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-red-700">{t.totalSupplierDebt}</p>
               <p className="mt-3 font-mono text-3xl font-bold text-red-700">{formatCurrency(totalSupplierDebt)}</p>
+            </div>
+
+            <div className="flex flex-col justify-center rounded-xl border border-amber-100 bg-amber-50 p-5">
+              <h3 className="mb-2 text-xs font-bold uppercase tracking-wider text-amber-600">{t.grossProfit}</h3>
+              <span className="font-mono text-2xl font-black text-amber-700">{formatCurrency(grossProfit)}</span>
             </div>
           </div>
 

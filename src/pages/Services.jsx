@@ -28,6 +28,28 @@ const createUniqueTemplateKey = () => {
   return `template-${stamp}-${randomPart}`;
 };
 
+const getExternalUrl = (value) => {
+  const url = String(value || '').trim();
+  if (!url) return '';
+  return /^https?:\/\//i.test(url) ? url : `https://${url}`;
+};
+
+const moveInArray = (arr, fromIndex, toIndex) => {
+  if (fromIndex < 0 || fromIndex >= arr.length || toIndex < 0 || toIndex >= arr.length) return arr;
+  const newArr = [...arr];
+  const [movedItem] = newArr.splice(fromIndex, 1);
+  newArr.splice(toIndex, 0, movedItem);
+  return newArr;
+};
+
+const persistSortOrder = async (table, rows) => {
+  const results = await Promise.all(rows.map((row, index) => (
+    supabase.from(table).update({ sort_order: index }).eq('id', row.id)
+  )));
+  const failedUpdate = results.find((result) => result.error);
+  if (failedUpdate) throw failedUpdate.error;
+};
+
 const translations = {
   en: {
     eyebrow: 'Workflow',
@@ -515,6 +537,34 @@ export default function Services({ language = 'en' }) {
     }
   };
 
+  const updateClientServiceItemNote = async (stageId, stepId, itemId, note) => {
+    if (!selectedClientService) return;
+
+    const nextStagesData = (selectedClientService.stages_data || []).map((stage) => (
+      stage.id === stageId
+        ? {
+            ...stage,
+            steps: (stage.steps || []).map((step) => (
+              step.id === stepId
+                ? {
+                    ...step,
+                    items: (step.items || []).map((item) => (
+                      item.id === itemId ? { ...item, note } : item
+                    )),
+                  }
+                : step
+            )),
+          }
+        : stage
+    ));
+
+    try {
+      await persistStagesData(selectedClientService.id, nextStagesData);
+    } catch (err) {
+      setError(err.message || 'Unable to update item note.');
+    }
+  };
+
   // ---- Templates: manage stages/steps/items ----
 
   const selectedTemplate = activeTemplate
@@ -896,22 +946,19 @@ export default function Services({ language = 'en' }) {
     }
   };
 
-  const reorderStage = async (stageId, direction) => {
-    const orderedStages = [...workflow].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
-    const currentIndex = orderedStages.findIndex((stage) => stage.id === stageId);
-    const targetIndex = currentIndex + direction;
-    if (currentIndex < 0 || targetIndex < 0 || targetIndex >= orderedStages.length) return;
-
-    const nextStages = [...orderedStages];
-    [nextStages[currentIndex], nextStages[targetIndex]] = [nextStages[targetIndex], nextStages[currentIndex]];
-
+  const moveStage = async (stageIndex, direction) => {
+    const nextStages = moveInArray(workflow, stageIndex, stageIndex + direction);
+    if (nextStages === workflow) return;
+    const reorderedStages = nextStages.map((stage, index) => ({ ...stage, sort_order: index }));
     try {
-      await Promise.all(
-        nextStages.map((stage, index) => supabase.from('service_stages').update({ sort_order: index }).eq('id', stage.id))
-      );
-      setWorkflow(nextStages);
+      setSaving(true);
+      setError('');
+      await persistSortOrder('service_stages', reorderedStages);
+      setWorkflow(reorderedStages);
     } catch (err) {
       setError(err.message || 'Unable to reorder stage.');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -936,6 +983,28 @@ export default function Services({ language = 'en' }) {
       );
     } catch (err) {
       setError(err.message || 'Unable to add step.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const moveStep = async (stageId, stepIndex, direction) => {
+    const stage = workflow.find((item) => item.id === stageId);
+    if (!stage) return;
+
+    const nextSteps = moveInArray(stage.steps || [], stepIndex, stepIndex + direction);
+    if (nextSteps === stage.steps) return;
+    const reorderedSteps = nextSteps.map((step, index) => ({ ...step, sort_order: index }));
+
+    try {
+      setSaving(true);
+      setError('');
+      await persistSortOrder('service_steps', reorderedSteps);
+      setWorkflow((previous) => previous.map((item) => (
+        item.id === stageId ? { ...item, steps: reorderedSteps } : item
+      )));
+    } catch (err) {
+      setError(err.message || 'Unable to reorder step.');
     } finally {
       setSaving(false);
     }
@@ -1015,6 +1084,36 @@ export default function Services({ language = 'en' }) {
       );
     } catch (err) {
       setError(err.message || 'Unable to add item.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const moveItem = async (stageId, stepId, itemIndex, direction) => {
+    const stage = workflow.find((item) => item.id === stageId);
+    const step = stage?.steps?.find((item) => item.id === stepId);
+    if (!step) return;
+
+    const nextItems = moveInArray(step.items || [], itemIndex, itemIndex + direction);
+    if (nextItems === step.items) return;
+    const reorderedItems = nextItems.map((item, index) => ({ ...item, sort_order: index }));
+
+    try {
+      setSaving(true);
+      setError('');
+      await persistSortOrder('service_items', reorderedItems);
+      setWorkflow((previous) => previous.map((stageItem) => (
+        stageItem.id === stageId
+          ? {
+              ...stageItem,
+              steps: stageItem.steps.map((stepItem) => (
+                stepItem.id === stepId ? { ...stepItem, items: reorderedItems } : stepItem
+              )),
+            }
+          : stageItem
+      )));
+    } catch (err) {
+      setError(err.message || 'Unable to reorder item.');
     } finally {
       setSaving(false);
     }
@@ -1241,6 +1340,7 @@ export default function Services({ language = 'en' }) {
             onBack={() => setSelectedClientServiceId(null)}
             onToggleItem={toggleClientServiceItem}
             onUpdateLink={updateClientServiceItemLink}
+            onUpdateNote={updateClientServiceItemNote}
             editingItemId={editingItemId}
             setEditingItemId={setEditingItemId}
             editingItemDraft={editingItemDraft}
@@ -1715,16 +1815,24 @@ export default function Services({ language = 'en' }) {
                             <Plus size={14} />
                             Add Step
                           </button>
-                          {stageIndex > 0 && (
-                            <button type="button" onClick={() => reorderStage(stage.id, -1)} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500">
-                              <ArrowUp size={14} />
-                            </button>
-                          )}
-                          {stageIndex < workflow.length - 1 && (
-                            <button type="button" onClick={() => reorderStage(stage.id, 1)} className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500">
-                              <ArrowDown size={14} />
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            onClick={() => moveStage(stageIndex, -1)}
+                            disabled={saving || stageIndex === 0}
+                            aria-label={`Move ${stage.title} up`}
+                            className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 disabled:cursor-not-allowed disabled:opacity-35"
+                          >
+                            <ArrowUp size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => moveStage(stageIndex, 1)}
+                            disabled={saving || stageIndex === workflow.length - 1}
+                            aria-label={`Move ${stage.title} down`}
+                            className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 disabled:cursor-not-allowed disabled:opacity-35"
+                          >
+                            <ArrowDown size={14} />
+                          </button>
                           <button type="button" onClick={() => deleteStage(stage.id)} className="rounded-lg border border-red-200 bg-red-50 p-2 text-red-600">
                             <Trash2 size={14} />
                           </button>
@@ -1732,7 +1840,7 @@ export default function Services({ language = 'en' }) {
                       </div>
 
                       <div className="mt-4 space-y-3">
-                        {(stage.steps || []).map((step) => (
+                        {(stage.steps || []).map((step, stepIndex) => (
                           <div key={step.id} className="rounded-xl border border-slate-200 bg-brand-surface p-3">
                             <div className="flex flex-wrap items-center justify-between gap-3">
                               <div className="flex items-center gap-2">
@@ -1758,6 +1866,24 @@ export default function Services({ language = 'en' }) {
                                   <Plus size={14} />
                                   Add Item
                                 </button>
+                                <button
+                                  type="button"
+                                  onClick={() => moveStep(stage.id, stepIndex, -1)}
+                                  disabled={saving || stepIndex === 0}
+                                  aria-label={`Move ${step.title} up`}
+                                  className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 disabled:cursor-not-allowed disabled:opacity-35"
+                                >
+                                  <ArrowUp size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => moveStep(stage.id, stepIndex, 1)}
+                                  disabled={saving || stepIndex === (stage.steps || []).length - 1}
+                                  aria-label={`Move ${step.title} down`}
+                                  className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 disabled:cursor-not-allowed disabled:opacity-35"
+                                >
+                                  <ArrowDown size={14} />
+                                </button>
                                 <button type="button" onClick={() => deleteStep(stage.id, step.id)} className="rounded-lg border border-red-200 bg-red-50 p-2 text-red-600">
                                   <Trash2 size={14} />
                                 </button>
@@ -1765,7 +1891,7 @@ export default function Services({ language = 'en' }) {
                             </div>
 
                             <div className="mt-3 space-y-2">
-                              {(step.items || []).map((item) => {
+                              {(step.items || []).map((item, itemIndex) => {
                                 const isItemEditing = editingItemId === item.id;
                                 return (
                                   <div key={item.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
@@ -1800,6 +1926,24 @@ export default function Services({ language = 'en' }) {
 
                                     {!isItemEditing && (
                                       <div className="flex items-center gap-2">
+                                        <button
+                                          type="button"
+                                          onClick={() => moveItem(stage.id, step.id, itemIndex, -1)}
+                                          disabled={saving || itemIndex === 0}
+                                          aria-label={`Move ${item.title} up`}
+                                          className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 disabled:cursor-not-allowed disabled:opacity-35"
+                                        >
+                                          <ArrowUp size={14} />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => moveItem(stage.id, step.id, itemIndex, 1)}
+                                          disabled={saving || itemIndex === (step.items || []).length - 1}
+                                          aria-label={`Move ${item.title} down`}
+                                          className="rounded-lg border border-slate-200 bg-white p-2 text-slate-500 disabled:cursor-not-allowed disabled:opacity-35"
+                                        >
+                                          <ArrowDown size={14} />
+                                        </button>
                                         <button
                                           type="button"
                                           onClick={() => {
@@ -1923,7 +2067,7 @@ export default function Services({ language = 'en' }) {
   );
 }
 
-function ClientServiceDetail({ row, onBack, onToggleItem, onUpdateLink, editingItemId, setEditingItemId, editingItemDraft, setEditingItemDraft }) {
+function ClientServiceDetail({ row, onBack, onToggleItem, onUpdateLink, onUpdateNote, editingItemId, setEditingItemId, editingItemDraft, setEditingItemDraft }) {
   const stagesData = row.stages_data || [];
 
   return (
@@ -1978,7 +2122,7 @@ function ClientServiceDetail({ row, onBack, onToggleItem, onUpdateLink, editingI
 
                         return (
                           <div key={item.id} className="flex flex-col gap-2 rounded-xl border border-slate-200 bg-white p-3 md:flex-row md:items-center md:justify-between">
-                            <div className="flex min-w-0 flex-1 items-center gap-3">
+                            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
                               <button
                                 type="button"
                                 onClick={() => onToggleItem(stage.id, step.id, item.id, !itemDone)}
@@ -1994,17 +2138,14 @@ function ClientServiceDetail({ row, onBack, onToggleItem, onUpdateLink, editingI
                                 {item.title}
                               </span>
 
-                              {item.drive_url && (
-                                <a
-                                  href={item.drive_url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="inline-flex rounded-lg bg-brand-surface p-2 text-brand-navy transition hover:bg-slate-200"
-                                  aria-label="Open item drive link"
-                                >
-                                  <LinkIcon size={14} />
-                                </a>
-                              )}
+                              <input
+                                type="text"
+                                placeholder="Add notes..."
+                                defaultValue={item.note || ''}
+                                onBlur={(event) => onUpdateNote(stage.id, step.id, item.id, event.target.value)}
+                                className="ml-1 w-full max-w-xs rounded px-2 py-1 text-sm text-slate-600 border-b border-transparent hover:border-slate-300 focus:border-amber-500 focus:outline-none focus:bg-white transition-all"
+                                aria-label={`Notes for ${item.title}`}
+                              />
                             </div>
 
                             {isItemEditing ? (
@@ -2031,17 +2172,30 @@ function ClientServiceDetail({ row, onBack, onToggleItem, onUpdateLink, editingI
                                 </button>
                               </div>
                             ) : (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setEditingItemId(item.id);
-                                  setEditingItemDraft(item.drive_url || '');
-                                }}
-                                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-brand-navy"
-                              >
-                                <LinkIcon size={12} />
-                                {item.drive_url ? 'Edit link' : 'Add Drive link'}
-                              </button>
+                              <div className="flex shrink-0 items-center gap-2">
+                                {item.drive_url && (
+                                  <a
+                                    href={getExternalUrl(item.drive_url)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700 transition-colors hover:bg-amber-100"
+                                  >
+                                    <LinkIcon size={12} />
+                                    Open Link
+                                  </a>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingItemId(item.id);
+                                    setEditingItemDraft(item.drive_url || '');
+                                  }}
+                                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-brand-navy"
+                                >
+                                  <LinkIcon size={12} />
+                                  {item.drive_url ? 'Edit link' : 'Add Drive link'}
+                                </button>
+                              </div>
                             )}
                           </div>
                         );
