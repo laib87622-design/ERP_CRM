@@ -80,6 +80,8 @@ export default function Services({ language = 'en' }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState('');
   const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'create' | 'edit'
   const [activeTemplate, setActiveTemplate] = useState(null);
   const [templateToCopy, setTemplateToCopy] = useState('');
@@ -480,6 +482,23 @@ export default function Services({ language = 'en' }) {
     }
   };
 
+  const handleSaveClientService = async () => {
+    if (!selectedClientService || !supabase) return;
+
+    try {
+      setIsSaving(true);
+      setSaveMessage('');
+      setError('');
+      await persistStagesData(selectedClientService.id, selectedClientService.stages_data || []);
+      setSaveMessage('Saved successfully!');
+      window.setTimeout(() => setSaveMessage(''), 3000);
+    } catch (err) {
+      setError(err.message || 'Unable to save client service.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const toggleClientServiceItem = async (stageId, stepId, itemId, nextValue) => {
     if (!selectedClientService) return;
 
@@ -617,6 +636,76 @@ export default function Services({ language = 'en' }) {
     if (mode !== 'templates') return;
     loadWorkflow(selectedTemplateId);
   }, [selectedTemplateId, mode]);
+
+  const handleSaveTemplate = async () => {
+    if (!supabase || !selectedTemplateId || !selectedTemplate) return;
+
+    const title = String(editingTemplateName ? draftTemplateName : selectedTemplate.title || '').trim();
+    if (!title) {
+      setError('Template name is required.');
+      return;
+    }
+
+    const matrixPayload = sanitizeTemplateMatrixPayload({
+      ...templateMatrix,
+      client_id: null,
+      supplier_id: null,
+      package_id: null,
+    });
+
+    if (!matrixPayload.country_id || !matrixPayload.visa_type_id || !matrixPayload.professional_status) {
+      setError('Country, visa type, and professional status are required before saving the template.');
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+      setSaveMessage('');
+      setError('');
+
+      const { error: templateError } = await supabase
+        .from('service_templates')
+        .update({ ...matrixPayload, title })
+        .eq('id', selectedTemplateId);
+
+      if (templateError) throw templateError;
+
+      const childUpdates = [
+        ...workflow.map((stage, stageIndex) =>
+          supabase.from('service_stages')
+            .update({ title: stage.title, sort_order: stageIndex })
+            .eq('id', stage.id)
+        ),
+        ...workflow.flatMap((stage) => (stage.steps || []).flatMap((step, stepIndex) => [
+          supabase.from('service_steps')
+            .update({ title: step.title, sort_order: stepIndex })
+            .eq('id', step.id),
+          ...(step.items || []).map((item, itemIndex) =>
+            supabase.from('service_items')
+              .update({ title: item.title, sort_order: itemIndex })
+              .eq('id', item.id)
+          ),
+        ])),
+      ];
+      const childResults = await Promise.all(childUpdates);
+      const childError = childResults.find((result) => result.error)?.error;
+      if (childError) throw childError;
+
+      const updatedTemplate = { ...selectedTemplate, ...matrixPayload, title };
+      setTemplates((previous) => previous.map((template) => (
+        template.id === selectedTemplateId ? updatedTemplate : template
+      )));
+      setActiveTemplate(updatedTemplate);
+      setDraftTemplateName(title);
+      setEditingTemplateName(false);
+      setSaveMessage('Saved successfully!');
+      window.setTimeout(() => setSaveMessage(''), 3000);
+    } catch (err) {
+      setError(err.message || 'Unable to save template.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const findMasterTemplateMatrixConflict = async ({ countryValue, visaValue, professionalValue, excludeId = null }) => {
     if (!supabase) return null;
@@ -1338,6 +1427,9 @@ export default function Services({ language = 'en' }) {
           <ClientServiceDetail
             row={selectedClientService}
             onBack={() => setSelectedClientServiceId(null)}
+            onSave={handleSaveClientService}
+            isSaving={isSaving}
+            saveMessage={saveMessage}
             onToggleItem={toggleClientServiceItem}
             onUpdateLink={updateClientServiceItemLink}
             onUpdateNote={updateClientServiceItemNote}
@@ -1485,6 +1577,9 @@ export default function Services({ language = 'en' }) {
                     key={template.id}
                     onClick={() => {
                       setActiveTemplate(template);
+                      setSelectedTemplateId(template.id);
+                      setWorkflow([]);
+                      setLoading(true);
                       setViewMode('edit');
                     }}
                     className="flex h-40 cursor-pointer flex-col justify-between rounded-xl border border-slate-200 bg-white p-6 shadow-sm transition-shadow hover:shadow-md"
@@ -1721,6 +1816,21 @@ export default function Services({ language = 'en' }) {
                     {activeTemplate.country_id} - {activeTemplate.visa_type_id}
                   </h2>
                   <p className="text-slate-500">Status: {activeTemplate.professional_status}</p>
+                </div>
+                <div className="flex flex-wrap items-center justify-end gap-3">
+                  {saveMessage && (
+                    <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-600 animate-pulse">
+                      {saveMessage}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleSaveTemplate}
+                    disabled={isSaving || saving || loading}
+                    className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-2.5 font-bold text-white shadow-md transition-all hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {isSaving ? 'Saving...' : 'Save Template'}
+                  </button>
                 </div>
               </div>
 
@@ -2067,12 +2177,12 @@ export default function Services({ language = 'en' }) {
   );
 }
 
-function ClientServiceDetail({ row, onBack, onToggleItem, onUpdateLink, onUpdateNote, editingItemId, setEditingItemId, editingItemDraft, setEditingItemDraft }) {
+function ClientServiceDetail({ row, onBack, onSave, isSaving, saveMessage, onToggleItem, onUpdateLink, onUpdateNote, editingItemId, setEditingItemId, editingItemDraft, setEditingItemDraft }) {
   const stagesData = row.stages_data || [];
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <button
           type="button"
           onClick={onBack}
@@ -2082,9 +2192,24 @@ function ClientServiceDetail({ row, onBack, onToggleItem, onUpdateLink, onUpdate
           Back
         </button>
 
-        <div className="text-right">
-          <p className="text-xs font-semibold uppercase tracking-[0.15em] text-brand-gold">{row.clientName}</p>
-          <h3 className="font-serif text-2xl text-brand-navy">{row.templateName}</h3>
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          {saveMessage && (
+            <span className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-semibold text-emerald-600 animate-pulse">
+              {saveMessage}
+            </span>
+          )}
+          <div className="text-right">
+            <p className="text-xs font-semibold uppercase tracking-[0.15em] text-brand-gold">{row.clientName}</p>
+            <h3 className="font-serif text-2xl text-brand-navy">{row.templateName}</h3>
+          </div>
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={isSaving}
+            className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-2.5 font-bold text-white shadow-md transition-all hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isSaving ? 'Saving...' : 'Save Service'}
+          </button>
         </div>
       </div>
 
