@@ -26,6 +26,43 @@ export const fetchNotificationsForUser = async (userId) => {
   return data || [];
 };
 
+export const createFinanceNotification = async (title, message) => {
+  if (!supabase) {
+    throw new Error('Supabase is not configured.');
+  }
+
+  const { data: profiles, error: profilesError } = await supabase
+    .from('profiles')
+    .select('id')
+    .contains('permissions', { finance: true });
+
+  if (profilesError) throw profilesError;
+
+  const outcomes = await Promise.all((profiles || []).map(async (profile) => {
+    const { data, error } = await supabase
+      .from('notifications')
+      .insert({
+        user_id: profile.id,
+        title,
+        message,
+        channel: 'system',
+        type: 'info',
+        is_read: false,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error(`Failed to create finance notification for ${profile.id}:`, error);
+      return { userId: profile.id, error };
+    }
+
+    return { userId: profile.id, data };
+  }));
+
+  return outcomes;
+};
+
 export const deliverPushNotification = async ({
   channel = 'system',
   title,

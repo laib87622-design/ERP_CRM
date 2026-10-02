@@ -2460,6 +2460,9 @@ export default function Bookings({ language = 'en', onNotification }) {
                   onChange={(event) => handleFieldChange('finish_date', event.target.value)}
                   className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 text-brand-navy outline-none focus:border-brand-gold"
                 />
+                <p className="mt-1 text-xs font-medium text-slate-400">
+                  This is the final deadline for the client to fully pay for this booking.
+                </p>
               </div>
 
               <div>

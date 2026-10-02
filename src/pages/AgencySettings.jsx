@@ -290,6 +290,7 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
   const [role, setRole] = useState('viewer');
   const [teamMembers, setTeamMembers] = useState([]);
   const [teamLoading, setTeamLoading] = useState(true);
+  const [savingSalaryPayDayFor, setSavingSalaryPayDayFor] = useState(null);
   const [savingPermissionsFor, setSavingPermissionsFor] = useState(null);
   const [serviceTypes, setServiceTypes] = useState([]);
   const [commissionSearch, setCommissionSearch] = useState('');
@@ -311,6 +312,7 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
     base_salary: 0,
   });
   const [password, setPassword] = useState('');
+  const [payDay, setPayDay] = useState('');
   const [submittingInvite, setSubmittingInvite] = useState(false);
   const [toast, setToast] = useState('');
 
@@ -1048,6 +1050,12 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
       return;
     }
 
+    const parsedPayDay = payDay === '' ? null : Number.parseInt(payDay, 10);
+    if (parsedPayDay !== null && (!Number.isInteger(parsedPayDay) || parsedPayDay < 1 || parsedPayDay > 31)) {
+      setError('Salary pay day must be between 1 and 31.');
+      return;
+    }
+
     setSubmittingInvite(true);
 
     try {
@@ -1057,6 +1065,7 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
         full_name: inviteForm.full_name.trim(),
         role: inviteForm.role,
         base_salary: Number(inviteForm.base_salary || 0),
+        salary_pay_day: parsedPayDay,
       };
 
       const { data, error } = await supabase.functions.invoke('rapid-endpoint', {
@@ -1070,6 +1079,7 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
       setToast('User created successfully!');
       setInviteForm({ full_name: '', email: '', role: 'sales_agent', base_salary: 0 });
       setPassword('');
+      setPayDay('');
       await loadTeamMembers();
     } catch (err) {
       setError(err.message || 'Unable to create user.');
@@ -1106,6 +1116,44 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
       setToast('Base salary updated');
     } catch (err) {
       setError(err.message || 'Unable to update base salary.');
+    }
+  };
+
+  const handleSalaryPayDayDraftChange = (userId, nextPayDay) => {
+    setTeamMembers((prev) => prev.map((member) => (
+      member.id === userId
+        ? { ...member, salary_pay_day: nextPayDay === '' ? '' : Number(nextPayDay) }
+        : member
+    )));
+  };
+
+  const handleSaveSalaryPayDay = async (userId, nextPayDay) => {
+    if (!canManageTeam || !supabase || !userId) return;
+
+    const parsedPayDay = nextPayDay === '' || nextPayDay === null ? null : Number(nextPayDay);
+    if (parsedPayDay !== null && (!Number.isInteger(parsedPayDay) || parsedPayDay < 1 || parsedPayDay > 31)) {
+      setError('Salary pay day must be between 1 and 31.');
+      return;
+    }
+
+    try {
+      setSavingSalaryPayDayFor(userId);
+      setError('');
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ salary_pay_day: parsedPayDay })
+        .eq('id', userId);
+
+      if (updateError) throw updateError;
+
+      setTeamMembers((prev) => prev.map((member) => (
+        member.id === userId ? { ...member, salary_pay_day: parsedPayDay } : member
+      )));
+      setToast('Salary pay day updated');
+    } catch (err) {
+      setError(err.message || 'Unable to update salary pay day.');
+    } finally {
+      setSavingSalaryPayDayFor(null);
     }
   };
 
@@ -1571,6 +1619,20 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
                 />
               </label>
 
+              <label className="block text-sm text-brand-navy">
+                <span className="mb-1 block font-medium">Salary Pay Day</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="31"
+                  step="1"
+                  value={payDay}
+                  onChange={(event) => setPayDay(event.target.value)}
+                  placeholder="1-31"
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 outline-none focus:border-brand-gold"
+                />
+              </label>
+
               <div className="md:col-span-2 xl:col-span-4 flex justify-end">
                 <button
                   type="submit"
@@ -1639,6 +1701,30 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
                                     className="w-full rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-brand-navy outline-none focus:border-brand-gold"
                                   />
                                 </label>
+
+                                <div className="block text-[11px] text-slate-500">
+                                  <label htmlFor={`salary-pay-day-${member.id}`} className="mb-1 block">Salary Pay Day</label>
+                                  <div className="flex gap-2">
+                                    <input
+                                      id={`salary-pay-day-${member.id}`}
+                                      type="number"
+                                      min="1"
+                                      max="31"
+                                      step="1"
+                                      value={member.salary_pay_day ?? ''}
+                                      onChange={(event) => handleSalaryPayDayDraftChange(member.id, event.target.value)}
+                                      className="w-full min-w-0 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs text-brand-navy outline-none focus:border-brand-gold"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => handleSaveSalaryPayDay(member.id, member.salary_pay_day)}
+                                      disabled={savingSalaryPayDayFor === member.id}
+                                      className="shrink-0 rounded-lg bg-brand-navy px-2 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                                    >
+                                      {savingSalaryPayDayFor === member.id ? 'Saving...' : 'Save'}
+                                    </button>
+                                  </div>
+                                </div>
 
                                 <fieldset className="rounded-lg border border-slate-200 bg-slate-50 p-2">
                                   <legend className="px-1 text-[11px] font-semibold text-slate-600">Module permissions</legend>

@@ -28,6 +28,7 @@ export default function AgentProfile() {
   const [commissions, setCommissions] = useState({ paid: 0, unpaid: 0 });
   const [bookings, setBookings] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -89,6 +90,61 @@ export default function AgentProfile() {
     };
   }, []);
 
+  const handleAvatarUpload = async (event) => {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    input.value = '';
+
+    if (!file.type.startsWith('image/')) {
+      setError('Please choose an image file.');
+      return;
+    }
+
+    if (!profile?.id || !supabase) {
+      setError('Your profile is not ready for an avatar upload.');
+      return;
+    }
+
+    let uploadedPath = '';
+
+    try {
+      setUploadingAvatar(true);
+      setError('');
+
+      const fileExt = file.name.split('.').pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+      const uniqueId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      uploadedPath = `${profile.id}-${uniqueId}.${fileExt}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(uploadedPath, file, { contentType: file.type, upsert: false });
+
+      if (uploadError) throw uploadError;
+
+      const { data: publicUrlData } = supabase.storage.from('avatars').getPublicUrl(uploadedPath);
+      const publicUrl = publicUrlData?.publicUrl;
+      if (!publicUrl) throw new Error('Unable to get a public URL for the uploaded image.');
+
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .update({ avatar_url: publicUrl })
+        .eq('id', profile.id);
+
+      if (profileError) throw profileError;
+
+      setProfile((currentProfile) => ({ ...currentProfile, avatar_url: publicUrl }));
+    } catch (uploadError) {
+      if (uploadedPath) {
+        await supabase.storage.from('avatars').remove([uploadedPath]);
+      }
+      setError(uploadError.message || 'Unable to upload profile picture.');
+    } finally {
+      setUploadingAvatar(false);
+    }
+  };
+
   const initials = String(profile?.full_name || 'Agent')
     .trim()
     .split(/\s+/)
@@ -115,11 +171,34 @@ export default function AgentProfile() {
             <h2 className="text-xs font-semibold uppercase tracking-[0.14em]">Account details</h2>
           </div>
           <div className="mt-5 flex items-center gap-3">
-            {profile?.avatar_url ? (
-              <img src={profile.avatar_url} alt="Profile" className="h-12 w-12 rounded-full border border-slate-200 object-cover" />
-            ) : (
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 font-bold text-amber-700">{initials}</div>
-            )}
+            <label
+              tabIndex={0}
+              role="button"
+              aria-label={uploadingAvatar ? 'Uploading profile picture' : 'Change profile picture'}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  event.currentTarget.querySelector('input')?.click();
+                }
+              }}
+              className="group relative h-12 w-12 shrink-0 cursor-pointer overflow-hidden rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:ring-offset-2"
+            >
+              {profile?.avatar_url ? (
+                <img src={profile.avatar_url} alt="Profile" className="h-full w-full rounded-full border border-slate-200 object-cover" />
+              ) : (
+                <span className="flex h-full w-full items-center justify-center rounded-full bg-amber-100 font-bold text-amber-700">{initials}</span>
+              )}
+              <span className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-full bg-slate-950/70 px-1 text-center text-[9px] font-semibold leading-tight text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+                {uploadingAvatar ? 'Uploading...' : 'Change Picture'}
+              </span>
+              <input
+                type="file"
+                className="hidden"
+                accept="image/*"
+                onChange={handleAvatarUpload}
+                disabled={uploadingAvatar || loading}
+              />
+            </label>
             <div className="min-w-0">
               <p className="truncate text-base font-semibold text-brand-navy">{profile?.full_name || (loading ? 'Loading...' : 'Agent')}</p>
               <p className="mt-1 text-sm capitalize text-slate-500">{getRoleLabel(profile?.role)}</p>

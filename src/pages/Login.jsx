@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Mail, Lock, LogIn, ArrowRight } from 'lucide-react';
+import { Mail, Lock, Plane, ArrowRight } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import airvoyLogo from '../assets/airvoy.jpeg';
 
 export default function Login({ language = 'en', setLanguage }) {
   const [email, setEmail] = useState('');
@@ -36,96 +37,132 @@ export default function Login({ language = 'en', setLanguage }) {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-slate-100 via-white to-brand-soft p-6">
-      <div className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-8 shadow-xl shadow-slate-200/60">
-        <div className="mb-8 flex items-center justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-brand-gold">
-              {isArabic ? 'نظام ERP' : 'ERP System'}
-            </p>
-            <h1 className="mt-2 font-serif text-3xl text-brand-navy">
-              {isArabic ? 'تسجيل الدخول' : 'Sign in'}
-            </h1>
-          </div>
+    <div className="grid min-h-screen grid-cols-1 bg-slate-50 md:grid-cols-2" dir={isArabic ? 'rtl' : 'ltr'}>
+      <section className="relative flex min-h-[340px] flex-col justify-between overflow-hidden bg-gradient-to-br from-slate-950 via-slate-900 to-amber-950 px-7 py-8 text-white sm:px-10 md:min-h-screen md:px-14 md:py-12">
+        <div className="pointer-events-none absolute inset-0 opacity-[0.12]" aria-hidden="true" style={{ backgroundImage: 'radial-gradient(#f8fafc 0.7px, transparent 0.7px)', backgroundSize: '22px 22px' }} />
+        <div className="pointer-events-none absolute -bottom-24 -right-16 h-72 w-72 rounded-full border border-amber-200/15" aria-hidden="true" />
+        <div className="pointer-events-none absolute -bottom-10 -right-2 h-52 w-52 rounded-full border border-amber-200/10" aria-hidden="true" />
 
-          <button
-            type="button"
-            onClick={() => setLanguage?.(isArabic ? 'en' : 'ar')}
-            className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-brand-navy"
-          >
-            {isArabic ? 'EN' : 'عربي'}
-          </button>
+        <div className="relative flex items-center gap-3">
+          <img src={airvoyLogo} alt="Airvoy" className="h-11 w-11 rounded-lg border border-white/15 object-cover" />
+          <div>
+            <p className="text-sm font-bold uppercase tracking-[0.18em] text-white">AIRVOY</p>
+            <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-200">Travel services</p>
+          </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-5">
-          <div>
-            <label htmlFor="email" className="mb-2 block text-sm font-medium text-slate-700">
-              {isArabic ? 'البريد الإلكتروني' : 'Email'}
-            </label>
-            <div className="relative">
-              <Mail className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-slate-400" />
-              <input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder={isArabic ? 'name@example.com' : 'name@example.com'}
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-3 text-sm outline-none transition focus:border-brand-gold focus:bg-white"
-                required
-              />
-            </div>
+        <div className="relative max-w-xl py-12 md:py-0">
+          <div className="mb-6 inline-flex h-11 w-11 items-center justify-center rounded-xl border border-amber-100/20 bg-white/5 text-amber-200">
+            <Plane size={20} />
           </div>
-
-          <div>
-            <label htmlFor="password" className="mb-2 block text-sm font-medium text-slate-700">
-              {isArabic ? 'كلمة المرور' : 'Password'}
-            </label>
-            <div className="relative">
-              <Lock className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-slate-400" />
-              <input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder={isArabic ? '••••••••' : '••••••••'}
-                className="w-full rounded-xl border border-slate-200 bg-slate-50 py-3 pl-10 pr-3 text-sm outline-none transition focus:border-brand-gold focus:bg-white"
-                required
-              />
-            </div>
-          </div>
-
-          {error && (
-            <div className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-              {error}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-navy px-4 py-3 text-sm font-semibold text-white transition hover:bg-brand-gold hover:text-brand-navy disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            {loading ? (isArabic ? 'جاري تسجيل الدخول...' : 'Signing in...') : (
-              <>
-                {isArabic ? 'تسجيل الدخول' : 'Login'}
-                <ArrowRight size={16} />
-              </>
-            )}
-          </button>
-        </form>
-
-        <div className="mt-6 rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-xs text-slate-500">
-          <div className="flex items-center gap-2 font-medium text-slate-600">
-            <LogIn size={14} />
-            {isArabic ? 'معلومات الدخول' : 'Access info'}
-          </div>
-          <p className="mt-2">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-amber-200">
+            {isArabic ? 'منصة خدمات السفر' : 'Travel operations'}
+          </p>
+          <h2 className="mt-4 max-w-lg font-serif text-4xl leading-tight sm:text-5xl">
+            {isArabic ? 'مرحباً بعودتك' : 'Welcome back'}
+          </h2>
+          <p className="mt-5 max-w-md text-sm leading-6 text-slate-300 sm:text-base sm:leading-7">
             {isArabic
-              ? 'أنشئ المستخدم من Supabase Authentication أولاً ثم استخدم البريد وكلمة المرور.'
-              : 'Create the user in Supabase Auth first, then use the email and password here.'}
+              ? 'كل تفاصيل الرحلة، من أول حجز إلى آخر متابعة، في مكان واحد.'
+              : 'Your travel business, in step. Bring bookings, client care, and daily operations together in one place.'}
           </p>
         </div>
-      </div>
+
+        <p className="relative text-xs text-slate-400">
+          {isArabic ? 'منصة إدارة عمليات السفر' : 'Travel services management platform'}
+        </p>
+      </section>
+
+      <section className="flex min-h-[520px] items-center justify-center px-5 py-10 sm:px-8 md:min-h-screen md:px-12">
+        <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-7 shadow-[0_24px_70px_rgba(15,23,42,0.08)] sm:p-9">
+          <div className="mb-8 flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-700">
+                {isArabic ? 'بوابة الفريق' : 'Team portal'}
+              </p>
+              <h1 className="mt-2 font-serif text-3xl text-slate-900">
+                {isArabic ? 'تسجيل الدخول' : 'Sign in'}
+              </h1>
+              <p className="mt-2 text-sm text-slate-500">
+                {isArabic ? 'أدخل بيانات حسابك للمتابعة.' : 'Enter your account details to continue.'}
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setLanguage?.(isArabic ? 'en' : 'ar')}
+              className="shrink-0 rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 transition hover:border-amber-400 hover:text-amber-800"
+            >
+              {isArabic ? 'EN' : 'عربي'}
+            </button>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <div>
+              <label htmlFor="email" className="mb-2 block text-sm font-semibold text-slate-700">
+                {isArabic ? 'البريد الإلكتروني' : 'Email address'}
+              </label>
+              <div className="relative">
+                <Mail className={`pointer-events-none absolute top-3.5 h-4 w-4 text-slate-400 ${isArabic ? 'right-3' : 'left-3'}`} />
+                <input
+                  id="email"
+                  type="email"
+                  autoComplete="email"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  placeholder="name@example.com"
+                  className={`w-full rounded-lg border border-slate-300 bg-white py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 ${isArabic ? 'pr-10 pl-3' : 'pl-10 pr-3'}`}
+                  required
+                />
+              </div>
+            </div>
+
+            <div>
+              <label htmlFor="password" className="mb-2 block text-sm font-semibold text-slate-700">
+                {isArabic ? 'كلمة المرور' : 'Password'}
+              </label>
+              <div className="relative">
+                <Lock className={`pointer-events-none absolute top-3.5 h-4 w-4 text-slate-400 ${isArabic ? 'right-3' : 'left-3'}`} />
+                <input
+                  id="password"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  placeholder="••••••••••"
+                  className={`w-full rounded-lg border border-slate-300 bg-white py-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 ${isArabic ? 'pr-10 pl-3' : 'pl-10 pr-3'}`}
+                  required
+                />
+              </div>
+            </div>
+
+            {error && (
+              <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700">
+                {error}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-65"
+            >
+              {loading ? (isArabic ? 'جاري تسجيل الدخول...' : 'Signing in...') : (
+                <>
+                  {isArabic ? 'تسجيل الدخول' : 'Sign in'}
+                  <ArrowRight size={16} className={isArabic ? 'rotate-180' : ''} />
+                </>
+              )}
+            </button>
+          </form>
+
+          <p className="mt-7 border-t border-slate-100 pt-5 text-xs leading-5 text-slate-500">
+            {isArabic
+              ? 'يجب إنشاء الحساب من خلال مسؤول النظام قبل تسجيل الدخول.'
+              : 'Your account must be created by your system administrator before signing in.'}
+          </p>
+        </div>
+      </section>
     </div>
   );
 }

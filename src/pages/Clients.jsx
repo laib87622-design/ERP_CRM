@@ -109,6 +109,7 @@ export default function Clients() {
   const [tagMenuOpen, setTagMenuOpen] = useState(false);
   const [customTagDraft, setCustomTagDraft] = useState('');
   const [companions, setCompanions] = useState([emptyCompanion()]);
+  const [relationshipOptions, setRelationshipOptions] = useState([]);
   const [clientMetrics, setClientMetrics] = useState({
     totalClients: 0,
     activeBookings: 0,
@@ -122,6 +123,26 @@ export default function Clients() {
     const timeoutId = window.setTimeout(() => setToast(null), 1800);
     return () => window.clearTimeout(timeoutId);
   }, [toast]);
+
+  useEffect(() => {
+    const fetchRelationships = async () => {
+      if (!supabase) return;
+
+      const { data, error: fetchError } = await supabase
+        .from('relationship_types')
+        .select('label')
+        .order('label', { ascending: true });
+
+      if (fetchError) {
+        setError(fetchError.message || 'Unable to load relationship types.');
+        return;
+      }
+
+      setRelationshipOptions((data || []).map((row) => row.label).filter(Boolean));
+    };
+
+    fetchRelationships();
+  }, []);
 
   const copyReference = async (value, label) => {
     if (!value) return;
@@ -328,6 +349,40 @@ export default function Clients() {
         idx === index ? { ...companion, [field]: value } : companion
       )
     );
+  };
+
+  const handleRelationshipChange = async (index, value) => {
+    if (value !== 'ADD_NEW') {
+      handleCompanionChange(index, 'relationship', value);
+      return;
+    }
+
+    const newValue = window.prompt('Enter new relationship type:');
+    const formattedValue = newValue?.trim();
+    if (!formattedValue) return;
+
+    if (!supabase) {
+      setError('Supabase is not configured.');
+      return;
+    }
+
+    try {
+      const { error: insertError } = await supabase
+        .from('relationship_types')
+        .insert({ label: formattedValue });
+
+      if (insertError && insertError.code !== '23505') throw insertError;
+
+      setRelationshipOptions((prev) => (
+        prev.includes(formattedValue)
+          ? prev
+          : [...prev, formattedValue].sort((a, b) => a.localeCompare(b))
+      ));
+      handleCompanionChange(index, 'relationship', formattedValue);
+      setError('');
+    } catch (relationshipError) {
+      setError(relationshipError.message || 'Unable to add relationship type.');
+    }
   };
 
   const handleFieldChange = (field, value) => {
@@ -922,7 +977,7 @@ export default function Clients() {
                 <div className="mb-4 flex items-center justify-between gap-3">
                   <div>
                     <h4 className="text-lg font-semibold text-brand-navy">Additional Clients</h4>
-                    <p className="text-sm text-slate-500">Companions saved in the JSONB companions array</p>
+                    <p className="text-sm text-slate-500">Add family members or other travelers linked to this client.</p>
                   </div>
 
                   <button
@@ -967,11 +1022,20 @@ export default function Clients() {
 
                         <div>
                           <label className="mb-1 block text-sm font-medium text-brand-navy">Relationship</label>
-                          <input
-                            value={companion.relationship}
-                            onChange={(event) => handleCompanionChange(index, 'relationship', event.target.value)}
+                          <select
+                            value={companion.relationship || ''}
+                            onChange={(event) => handleRelationshipChange(index, event.target.value)}
                             className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 text-brand-navy outline-none focus:border-brand-gold"
-                          />
+                          >
+                            <option value="" disabled>Select relationship...</option>
+                            {companion.relationship && !relationshipOptions.includes(companion.relationship) && (
+                              <option value={companion.relationship}>{companion.relationship}</option>
+                            )}
+                            {relationshipOptions.map((option) => (
+                              <option key={option} value={option}>{option}</option>
+                            ))}
+                            <option value="ADD_NEW" className="font-bold text-amber-600">+ Add new relationship...</option>
+                          </select>
                         </div>
 
                         <div>
