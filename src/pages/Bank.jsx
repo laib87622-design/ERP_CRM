@@ -219,6 +219,21 @@ const Bank = ({ language = 'en', role: initialRole = 'viewer' }) => {
       return;
     }
 
+    const sourceAccount = financialAccounts.find((account) => account.id === selectedAccountId);
+    if (!sourceAccount) {
+      setError('Please select a valid source account.');
+      return;
+    }
+
+    const transactionAmount = Math.min(amount, Number(settleSupplier.supplier_debt || 0) || amount);
+    const availableBalance = parseFloat(sourceAccount.current_balance) || 0;
+    if (transactionAmount > availableBalance) {
+      setError(`Insufficient funds! This account only has ${availableBalance} ${sourceAccount.currency || 'DA'} available.`);
+      return;
+    }
+
+    let settlementError = '';
+
     try {
       setSettleSaving(true);
       setError('');
@@ -235,7 +250,7 @@ const Bank = ({ language = 'en', role: initialRole = 'viewer' }) => {
       const amountToApply = Math.min(amount, currentDebt || amount);
 
       if (!currentDebt || amountToApply <= 0) {
-        setError('This supplier has no debt to settle.');
+        settlementError = 'This supplier has no debt to settle.';
         return;
       }
 
@@ -247,7 +262,13 @@ const Bank = ({ language = 'en', role: initialRole = 'viewer' }) => {
 
       if (accountFetchError) throw accountFetchError;
 
-      const nextAccountBalance = Number(accountRow?.current_balance || 0) - amountToApply;
+      const currentBalance = Number(accountRow?.current_balance || 0);
+      if (amountToApply > currentBalance) {
+        settlementError = `Insufficient funds! This account only has ${currentBalance} ${sourceAccount.currency || 'DA'} available.`;
+        return;
+      }
+
+      const nextAccountBalance = currentBalance - amountToApply;
       const nextSupplierDebt = Math.max(currentDebt - amountToApply, 0);
 
       const { error: ledgerError } = await supabase.from('bank_entries').insert([
@@ -283,7 +304,7 @@ const Bank = ({ language = 'en', role: initialRole = 'viewer' }) => {
           supplier_id: settleSupplier.id,
           account_id: selectedAccountId,
           amount: amountToApply,
-          payment_method: String(accountRow?.label || 'cash').trim() || 'cash',
+          payment_method: 'cash',
           note,
           paid_at: new Date().toISOString(),
         },
@@ -291,13 +312,14 @@ const Bank = ({ language = 'en', role: initialRole = 'viewer' }) => {
 
       if (paymentInsertError) throw paymentInsertError;
 
+    } catch (err) {
+      settlementError = err.message || 'Unable to record supplier payment.';
+    } finally {
       setSettleSupplier(null);
       setSettleForm({ amount: '', note: '', selected_account_id: financialAccounts[0]?.id || '' });
       await loadBankData();
-    } catch (err) {
-      setError(err.message || 'Unable to record supplier payment.');
-    } finally {
       setSettleSaving(false);
+      if (settlementError) setError(settlementError);
     }
   };
 

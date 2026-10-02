@@ -41,8 +41,13 @@ export const processSupplierPayment = async ({
 
   if (accountError) throw accountError;
 
+  const currentBalance = Number(accountData?.current_balance || 0);
+  if (amountToApply > currentBalance) {
+    throw new Error(`Insufficient funds! This account only has ${currentBalance} DA available.`);
+  }
+
   const nextDebt = Math.max(currentDebt - amountToApply, 0);
-  const nextBalance = Number(accountData?.current_balance || 0) - amountToApply;
+  const nextBalance = currentBalance - amountToApply;
   const paidNote = String(note || 'Supplier payment').trim() || 'Supplier payment';
   const resolvedSupplierName = String(supplierName || supplierData?.name || 'Supplier').trim() || 'Supplier';
   const operationTypeLabel = String(accountData?.label || method || 'Direct Deduction').trim() || 'Direct Deduction';

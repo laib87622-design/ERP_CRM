@@ -16,7 +16,7 @@ const statusStyles = {
   partial: 'bg-orange-100 text-orange-700',
 };
 
-const defaultInvoicePaymentMethods = ['cash', 'bank_transfer', 'credit_card', 'baridimob'];
+const defaultInvoicePaymentMethods = ['cash', 'bank_transfer', 'ccp', 'credit_card', 'baridimob'];
 
 const normalizePaymentMethodValue = (value) => {
   const normalized = String(value || 'cash').trim().toLowerCase();
@@ -24,6 +24,7 @@ const normalizePaymentMethodValue = (value) => {
     cash: 'cash',
     'bank transfer': 'bank_transfer',
     bank_transfer: 'bank_transfer',
+    ccp: 'ccp',
     'credit card': 'credit_card',
     credit_card: 'credit_card',
     baridimob: 'baridimob',
@@ -38,6 +39,7 @@ const getPaymentMethodLabel = (value) => {
   const labels = {
     cash: 'Cash',
     bank_transfer: 'Bank Transfer',
+    ccp: 'CCP',
     credit_card: 'Credit Card',
     baridimob: 'BaridiMob',
   };
@@ -370,6 +372,15 @@ export default function Invoices({ language = 'en' }) {
       return;
     }
 
+    const total = parseFloat(invoice.grand_total) || 0;
+    const alreadyPaid = parseFloat(invoice.amount_paid) || 0;
+    const remainingAmount = total - alreadyPaid;
+
+    if (remainingAmount <= 0) {
+      setError('This invoice is already fully paid.');
+      return;
+    }
+
     const selectedType = options.forceType || invoicePaymentTypes[invoice.id] || getInvoicePaymentType(invoice);
     const partialAmountRaw = Number(invoicePartialAmounts[invoice.id] ?? invoice.amount_paid ?? 0);
     const selectedPayerId = normalizeUuidValue(selectedInvoicePayers[invoice.id] || invoice.client_id || null);
@@ -378,10 +389,9 @@ export default function Invoices({ language = 'en' }) {
     const selectedAccount = (financialAccounts || []).find((account) => account.id === selectedAccountId) || null;
     const selectedPaymentMethod = invoicePaymentMethods[invoice.id] || invoice.payment_method || getPaymentMethodsForAccount(selectedAccount)[0] || 'cash';
     const normalizedPaymentMethod = normalizePaymentMethodValue(selectedPaymentMethod);
-    const nextGrandTotal = Number(invoice.grand_total || 0);
+    const nextGrandTotal = total;
     const paymentMeta = getInvoicePaymentMeta(invoice, selectedType, partialAmountRaw);
-    const amountToRecord = options.forceFull ? nextGrandTotal : paymentMeta.amountPaid;
-    const alreadyPaid = Number(invoice.amount_paid || 0);
+    const amountToRecord = options.forceFull ? remainingAmount : paymentMeta.amountPaid;
     const newTotalPaid = Math.min(alreadyPaid + amountToRecord, nextGrandTotal);
 
     if (!selectedAccountId) {
@@ -403,7 +413,7 @@ export default function Invoices({ language = 'en' }) {
       setProcessingInvoiceId(invoice.id);
       setError('');
 
-      const fullPayment = options.forceFull || selectedType === 'full' || amountToRecord >= nextGrandTotal;
+      const fullPayment = options.forceFull || selectedType === 'full' || amountToRecord >= remainingAmount;
       const statusValue = fullPayment ? 'paid' : 'partial';
       const amountPaidValue = fullPayment ? nextGrandTotal : newTotalPaid;
       const hasRemaining = !fullPayment && paymentMeta.remaining > 0;
@@ -438,7 +448,12 @@ export default function Invoices({ language = 'en' }) {
       if (updateError) throw updateError;
 
       await syncBookingStatusFromInvoice(supabase, { ...invoice, ...updatePayload, booking_id: invoice.booking_id });
-      await recordInvoicePaymentInBanking(invoice, amountPaidValue, selectedAccountId, selectedPayerLabel);
+      await recordInvoicePaymentInBanking(
+        invoice,
+        fullPayment ? remainingAmount : amountToRecord,
+        selectedAccountId,
+        selectedPayerLabel
+      );
       await createCommissionEntriesForInvoice({ ...invoice, ...updatePayload }, amountPaidValue);
       await unlockCommissionAfterInvoiceSettlement(invoice, amountPaidValue);
       await fetchInvoices();

@@ -3,12 +3,18 @@ import { ArrowLeftRight, Landmark, Plus, Wallet } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 
+const getCurrentLocalDateTime = () => {
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  return now.toISOString().slice(0, 16);
+};
+
 const emptyForm = {
   source_account_id: '',
   target_account_id: '',
   amount: '',
   target_amount: '',
-  transfer_date: new Date().toISOString().slice(0, 10),
+  transfer_date: getCurrentLocalDateTime(),
   description: '',
 };
 
@@ -81,8 +87,19 @@ export default function InternalTransfer() {
     const sourceAmount = Number(form.amount || 0);
     const targetAmount = Number(form.target_amount || 0);
 
+    if (!sourceAccount) {
+      setError('Please select a valid source account.');
+      return;
+    }
+
     if (!Number.isFinite(sourceAmount) || sourceAmount <= 0) {
       setError('Transfer amount must be greater than zero.');
+      return;
+    }
+
+    const currentBalance = parseFloat(sourceAccount.current_balance) || 0;
+    if (sourceAmount > currentBalance) {
+      setError(`Insufficient funds! This account only has ${currentBalance} ${sourceAccount.currency || 'DA'} available.`);
       return;
     }
 
@@ -119,7 +136,7 @@ export default function InternalTransfer() {
       if (rpcError) throw rpcError;
 
       setSuccess('Transfer completed successfully.');
-      setForm(emptyForm);
+      setForm({ ...emptyForm, transfer_date: getCurrentLocalDateTime() });
       setTimeout(() => navigate('/bank'), 400);
     } catch (err) {
       setError(err.message || 'Unable to execute transfer.');
@@ -236,7 +253,7 @@ export default function InternalTransfer() {
             <div className="space-y-2">
               <label className="text-sm font-medium text-brand-navy">Date</label>
               <input
-                type="date"
+                type="datetime-local"
                 name="transfer_date"
                 value={form.transfer_date}
                 onChange={handleChange}

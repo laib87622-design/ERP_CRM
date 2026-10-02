@@ -64,6 +64,9 @@ export default function Services({ language = 'en' }) {
   const [country, setCountry] = useState('');
   const [visaType, setVisaType] = useState('');
   const [status, setStatus] = useState('');
+  const [countrySelect, setCountrySelect] = useState('');
+  const [visaSelect, setVisaSelect] = useState('');
+  const [statusSelect, setStatusSelect] = useState('');
   const [countryCustom, setCountryCustom] = useState('');
   const [visaCustom, setVisaCustom] = useState('');
   const [statusCustom, setStatusCustom] = useState('');
@@ -1093,16 +1096,20 @@ export default function Services({ language = 'en' }) {
   });
 
   const handleSaveMatrix = async () => {
-    if (!country || !visaType || !status) {
+    const nextCountry = (countryCustom || country).trim();
+    const nextVisaType = (visaCustom || visaType).trim();
+    const nextStatus = (statusCustom || status).trim();
+
+    if (!nextCountry || !nextVisaType || !nextStatus) {
       setError('Country, visa type, and professional status are required before saving the master template matrix.');
       return;
     }
 
     const payload = {
-      country_id: country.trim(),
-      visa_type_id: visaType.trim(),
-      professional_status: status.trim(),
-      title: `${country.trim()} - ${visaType.trim()} - ${status.trim()}`,
+      country_id: nextCountry,
+      visa_type_id: nextVisaType,
+      professional_status: nextStatus,
+      title: `${nextCountry} - ${nextVisaType} - ${nextStatus}`,
       client_id: null,
     };
 
@@ -1129,6 +1136,12 @@ export default function Services({ language = 'en' }) {
       setCountry('');
       setVisaType('');
       setStatus('');
+      setCountrySelect('');
+      setVisaSelect('');
+      setStatusSelect('');
+      setCountryCustom('');
+      setVisaCustom('');
+      setStatusCustom('');
       setTemplateToCopy('');
       setViewMode('edit');
       await loadTemplateMatrixOptions();
@@ -1406,16 +1419,19 @@ export default function Services({ language = 'en' }) {
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Country</label>
                   <select
-                    value={country || '__other__'}
+                    value={countrySelect || ''}
                     onChange={(e) => {
                       const value = e.target.value;
                       if (value === '__other__') {
+                        setCountrySelect('__other__');
                         setCountry('');
                         setCountryCustom('');
                         return;
                       }
+
+                      setCountrySelect(value);
                       setCountry(value);
-                      setCountryCustom(value);
+                      setCountryCustom('');
                     }}
                     className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-amber-400"
                   >
@@ -1426,14 +1442,14 @@ export default function Services({ language = 'en' }) {
                     <option value="__other__">Other...</option>
                   </select>
 
-                  {country === '' && countryCustom === '' && (
+                  {countrySelect === '__other__' && (
                     <input
                       type="text"
                       value={countryCustom}
                       onChange={(e) => {
-                        const value = e.target.value.trim();
+                        const value = e.target.value;
                         setCountryCustom(value);
-                        setCountry(value);
+                        setCountry(value.trim());
                       }}
                       placeholder="Enter country name"
                       className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-amber-400"
@@ -1444,16 +1460,19 @@ export default function Services({ language = 'en' }) {
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Visa Type</label>
                   <select
-                    value={visaType || '__other__'}
+                    value={visaSelect || ''}
                     onChange={(e) => {
                       const value = e.target.value;
                       if (value === '__other__') {
+                        setVisaSelect('__other__');
                         setVisaType('');
                         setVisaCustom('');
                         return;
                       }
+
+                      setVisaSelect(value);
                       setVisaType(value);
-                      setVisaCustom(value);
+                      setVisaCustom('');
                     }}
                     className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-amber-400"
                   >
@@ -1464,14 +1483,14 @@ export default function Services({ language = 'en' }) {
                     <option value="__other__">Other...</option>
                   </select>
 
-                  {visaType === '' && visaCustom === '' && (
+                  {visaSelect === '__other__' && (
                     <input
                       type="text"
                       value={visaCustom}
                       onChange={(e) => {
-                        const value = e.target.value.trim();
+                        const value = e.target.value;
                         setVisaCustom(value);
-                        setVisaType(value);
+                        setVisaType(value.trim());
                       }}
                       placeholder="Enter visa type"
                       className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-amber-400"
@@ -1482,16 +1501,19 @@ export default function Services({ language = 'en' }) {
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Professional Status</label>
                   <select
-                    value={status || '__other__'}
+                    value={statusSelect || ''}
                     onChange={(e) => {
                       const value = e.target.value;
                       if (value === '__other__') {
+                        setStatusSelect('__other__');
                         setStatus('');
                         setStatusCustom('');
                         return;
                       }
+
+                      setStatusSelect(value);
                       setStatus(value);
-                      setStatusCustom(value);
+                      setStatusCustom('');
                     }}
                     className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-amber-400"
                   >
@@ -1502,14 +1524,14 @@ export default function Services({ language = 'en' }) {
                     <option value="__other__">Other...</option>
                   </select>
 
-                  {status === '' && statusCustom === '' && (
+                  {statusSelect === '__other__' && (
                     <input
                       type="text"
                       value={statusCustom}
                       onChange={(e) => {
-                        const value = e.target.value.trim();
+                        const value = e.target.value;
                         setStatusCustom(value);
-                        setStatus(value);
+                        setStatus(value.trim());
                       }}
                       placeholder="Enter professional status"
                       className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-amber-400"
@@ -1531,18 +1553,34 @@ export default function Services({ language = 'en' }) {
                         setCountry('');
                         setVisaType('');
                         setStatus('');
+                        setCountrySelect('');
+                        setVisaSelect('');
+                        setStatusSelect('');
+                        setCountryCustom('');
+                        setVisaCustom('');
+                        setStatusCustom('');
                         return;
                       }
 
                       const selectedTemplateCopy = templates.find((template) => template.id === selectedId);
                       if (selectedTemplateCopy) {
-                        setCountry(selectedTemplateCopy.country_id || '');
-                        setVisaType(selectedTemplateCopy.visa_type_id || '');
-                        setStatus(selectedTemplateCopy.professional_status || '');
+                        const nextCountry = selectedTemplateCopy.country_id || '';
+                        const nextVisa = selectedTemplateCopy.visa_type_id || '';
+                        const nextStatus = selectedTemplateCopy.professional_status || '';
+
+                        setCountry(nextCountry);
+                        setVisaType(nextVisa);
+                        setStatus(nextStatus);
+                        setCountrySelect(nextCountry);
+                        setVisaSelect(nextVisa);
+                        setStatusSelect(nextStatus);
+                        setCountryCustom('');
+                        setVisaCustom('');
+                        setStatusCustom('');
                         setTemplateMatrix({
-                          country_id: selectedTemplateCopy.country_id || '',
-                          visa_type_id: selectedTemplateCopy.visa_type_id || '',
-                          professional_status: selectedTemplateCopy.professional_status || '',
+                          country_id: nextCountry,
+                          visa_type_id: nextVisa,
+                          professional_status: nextStatus,
                         });
                       }
                     }}

@@ -226,6 +226,7 @@ function SupplierDetailInner() {
 
     const amount = Number(paymentForm.amount);
     const selectedAccountId = paymentForm.account_id || financialAccounts[0]?.id || '';
+    const sourceAccount = financialAccounts.find((account) => account.id === selectedAccountId);
 
     if (!Number.isFinite(amount) || amount <= 0) {
       setError('Payment amount must be greater than zero.');
@@ -237,11 +238,22 @@ function SupplierDetailInner() {
       return;
     }
 
+    if (!sourceAccount) {
+      setToast('Please select a valid source account.');
+      return;
+    }
+
     const currentDebt = Number(supplier?.supplier_debt || 0);
     const amountToApply = Math.min(amount, currentDebt || amount);
 
     if (!currentDebt || amountToApply <= 0) {
       setError('This supplier has no outstanding debt to pay.');
+      return;
+    }
+
+    const currentBalance = parseFloat(sourceAccount.current_balance) || 0;
+    if (amountToApply > currentBalance) {
+      setToast(`Insufficient funds! This account only has ${currentBalance} ${sourceAccount.currency || 'DA'} available.`);
       return;
     }
 
@@ -259,13 +271,14 @@ function SupplierDetailInner() {
         supplierName: supplier?.name,
       });
 
+      setToast('Supplier payment recorded');
+    } catch (err) {
+      setToast(err.message || 'Unable to record supplier payment.');
+    } finally {
       setPaymentModalOpen(false);
       setPaymentForm(emptyPaymentForm);
-      await loadSupplier();
-    } catch (err) {
-      setError(err.message || 'Unable to record supplier payment.');
-    } finally {
       setSaving(false);
+      await loadSupplier();
     }
   };
 

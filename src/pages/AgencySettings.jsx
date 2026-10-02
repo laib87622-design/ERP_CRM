@@ -107,6 +107,15 @@ const roleBadgeStyles = {
   viewer: 'bg-slate-200 text-slate-700',
 };
 
+const availableModules = [
+  { id: 'dashboard', label: 'Dashboard' },
+  { id: 'clients', label: 'Clients & Bookings' },
+  { id: 'packages', label: 'Packages & Services' },
+  { id: 'finance', label: 'Finance (Invoices & Bank)' },
+  { id: 'workflow', label: 'Workflow (Visa & Tasks)' },
+  { id: 'settings', label: 'Admin Settings' },
+];
+
 export default function AgencySettings({ language = 'en', activeSection = 'agency' }) {
   const navigate = useNavigate();
   const { commissionId } = useParams();
@@ -281,6 +290,7 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
   const [role, setRole] = useState('viewer');
   const [teamMembers, setTeamMembers] = useState([]);
   const [teamLoading, setTeamLoading] = useState(true);
+  const [savingPermissionsFor, setSavingPermissionsFor] = useState(null);
   const [serviceTypes, setServiceTypes] = useState([]);
   const [commissionSearch, setCommissionSearch] = useState('');
   const [commissionPayoutFilter, setCommissionPayoutFilter] = useState('all');
@@ -460,12 +470,12 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
         const [{ data: readyCommissionData, error: readyError }, { data: allStatusData, error: allStatusError }, { data: accountData, error: accountError }] = await Promise.all([
           supabase
             .from('agent_commissions')
-            .select('*')
+            .select('*, invoices!agent_commissions_invoice_fk(invoice_number, reference)')
             .eq('status', 'READY_TO_PAY')
             .order('created_at', { ascending: false }),
           supabase
             .from('agent_commissions')
-            .select('*')
+            .select('*, invoices!agent_commissions_invoice_fk(invoice_number, reference)')
             .order('created_at', { ascending: false }),
           supabase.from('financial_accounts').select('id, label, current_balance').order('label', { ascending: true })
         ]);
@@ -474,40 +484,11 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
         if (allStatusError) throw allStatusError;
         if (accountError) throw accountError;
 
-        const normalizedReadyRows = (readyCommissionData || []).map((row) => ({
-          ...row,
-          target_type: row.target_type || 'agent',
-          notes: row.notes || `Commission payout - ${row.agent_id || 'agent'}`,
-          agent_name: 'Unknown Agent',
-          invoice_reference: 'N/A',
-          account_label: '—',
-        }));
-
-        const normalizedAllRows = (allStatusData || []).map((row) => ({
-          ...row,
-          target_type: row.target_type || 'agent',
-          notes: row.notes || `Commission payout - ${row.agent_id || 'agent'}`,
-          agent_name: 'Unknown Agent',
-          invoice_reference: 'N/A',
-          account_label: '—',
-        }));
-
-        const paidRows = normalizedAllRows.filter((row) => row.status === 'PAID');
-        const invoiceIds = [...new Set(paidRows.map((row) => row.invoice_id).filter(Boolean))];
-        const agentIds = [...new Set(paidRows.map((row) => row.agent_id).filter(Boolean))];
-
-        let invoiceReferenceMap = {};
+        const allCommissionRows = allStatusData || [];
+        const paidRows = allCommissionRows.filter((row) => row.status === 'PAID');
+        const agentIds = [...new Set(allCommissionRows.map((row) => row.agent_id).filter(Boolean))];
         let agentNameMap = {};
         let accountMatchMap = {};
-
-        if (invoiceIds.length > 0) {
-          const { data: invoiceRows } = await supabase
-            .from('invoices')
-            .select('id, reference, invoice_number, grand_total, paid_at')
-            .in('id', invoiceIds);
-
-          invoiceReferenceMap = Object.fromEntries((invoiceRows || []).map((invoice) => [invoice.id, invoice.reference || invoice.invoice_number || invoice.id]));
-        }
 
         if (agentIds.length > 0) {
           const { data: profileRows } = await supabase
@@ -517,6 +498,18 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
 
           agentNameMap = Object.fromEntries((profileRows || []).map((profile) => [profile.id, profile.full_name || 'Agent']));
         }
+
+        const mapCommissionRow = (row) => ({
+          ...row,
+          target_type: row.target_type || 'agent',
+          notes: row.notes || `Commission payout - ${row.agent_id || 'agent'}`,
+          agent_name: agentNameMap[row.agent_id] || 'Unknown Agent',
+          invoice_reference: row.invoices?.reference || row.invoices?.invoice_number || 'N/A',
+          account_label: '—',
+        });
+        const normalizedReadyRows = (readyCommissionData || []).map(mapCommissionRow);
+        const normalizedAllRows = allCommissionRows.map(mapCommissionRow);
+        const normalizedPaidRows = normalizedAllRows.filter((row) => row.status === 'PAID');
 
         const { data: bankRows } = await supabase
           .from('bank_entries')
@@ -538,7 +531,7 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
 
         accountMatchMap = Object.fromEntries((bankRows || []).map((entry) => [entry.id, accountLabelMap[entry.account_id] || 'Account']));
 
-        const mappedPaidHistory = paidRows.map((row) => {
+        const mappedPaidHistory = normalizedPaidRows.map((row) => {
           const matchingEntry = (bankRows || []).find((entry) => {
             const sameAgent = entry.agent_id === row.agent_id;
             const sameAmount = Number(entry.debit || 0) === Number(row.amount || 0) || Number(entry.credit || 0) === Number(row.amount || 0) || (Number(entry.debit || 0) + Number(entry.credit || 0)) === Number(row.amount || 0);
@@ -548,8 +541,8 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
           });
 
           const paymentAmount = Number(matchingEntry?.debit || matchingEntry?.credit || row.amount || 0);
-          const joinedAgentName = agentNameMap[row.agent_id] || 'Unknown Agent';
-          const joinedInvoiceNumber = invoiceReferenceMap[row.invoice_id] || 'N/A';
+          const joinedAgentName = row.agent_name || 'Unknown Agent';
+          const joinedInvoiceNumber = row.invoice_reference || 'N/A';
           const invoiceLabel = normalizeInvoiceReference(joinedInvoiceNumber === 'N/A' ? 'Manual commission' : `INV-${joinedInvoiceNumber}`);
           const paymentAccount = matchingEntry ? accountMatchMap[matchingEntry.id] || 'Account' : '—';
 
@@ -560,7 +553,9 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
             agent_name: joinedAgentName,
             payment_account: paymentAccount,
             amount_display: formatCommissionAmount(paymentAmount),
-            payment_date: row.paid_at ? new Date(row.paid_at).toLocaleDateString(language === 'ar' ? 'ar-DZ' : 'en-GB') : '—',
+            payment_date: row.paid_at && !Number.isNaN(new Date(row.paid_at).getTime())
+              ? new Date(row.paid_at).toLocaleDateString(language === 'ar' ? 'ar-DZ' : 'en-GB')
+              : '—',
           };
         });
 
@@ -673,7 +668,7 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
 
   const getCommissionInvoiceLabel = (row) => {
     if (!row) return 'Manual commission';
-    const candidate = row.invoice_reference || row.reference || row.invoice_number || row.invoice_id || 'Manual commission';
+    const candidate = row.invoice_reference || row.invoices?.reference || row.invoices?.invoice_number || row.reference || row.invoice_number || row.invoice_id || 'Manual commission';
     return normalizeInvoiceReference(candidate);
   };
 
@@ -974,11 +969,25 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
 
       const refreshed = await supabase
         .from('agent_commissions')
-        .select('*')
+        .select('*, invoices!agent_commissions_invoice_fk(invoice_number, reference)')
         .order('created_at', { ascending: false });
 
       if (!refreshed.error) {
-        setCommissionPayouts(refreshed.data || []);
+        const agentIds = [...new Set((refreshed.data || []).map((row) => row.agent_id).filter(Boolean))];
+        let agentNameMap = {};
+        if (agentIds.length > 0) {
+          const { data: profileRows } = await supabase
+            .from('profiles')
+            .select('id, full_name')
+            .in('id', agentIds);
+          agentNameMap = Object.fromEntries((profileRows || []).map((profile) => [profile.id, profile.full_name || 'Agent']));
+        }
+
+        setCommissionPayouts((refreshed.data || []).map((row) => ({
+          ...row,
+          agent_name: agentNameMap[row.agent_id] || 'Unknown Agent',
+          invoice_reference: row.invoices?.reference || row.invoices?.invoice_number || 'N/A',
+        })));
       }
 
       setToast('Commission paid and ledger updated.');
@@ -1097,6 +1106,43 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
       setToast('Base salary updated');
     } catch (err) {
       setError(err.message || 'Unable to update base salary.');
+    }
+  };
+
+  const handlePermissionChange = (userId, moduleId, checked) => {
+    setTeamMembers((prev) => prev.map((member) => (
+      member.id === userId
+        ? { ...member, permissions: { ...(member.permissions || {}), [moduleId]: checked } }
+        : member
+    )));
+  };
+
+  const handleSavePermissions = async (member) => {
+    if (!canManageTeam || !supabase || !member?.id) return;
+
+    const updatedPermissions = { ...(member.permissions || {}) };
+    availableModules.forEach(({ id }) => {
+      updatedPermissions[id] = Boolean(member.permissions?.[id]);
+    });
+
+    try {
+      setSavingPermissionsFor(member.id);
+      setError('');
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ permissions: updatedPermissions })
+        .eq('id', member.id);
+
+      if (updateError) throw updateError;
+
+      setTeamMembers((prev) => prev.map((row) => (
+        row.id === member.id ? { ...row, permissions: updatedPermissions } : row
+      )));
+      setToast('Permissions saved');
+    } catch (err) {
+      setError(err.message || 'Unable to save permissions.');
+    } finally {
+      setSavingPermissionsFor(null);
     }
   };
 
@@ -1389,7 +1435,7 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
                           </span>
                         </div>
                         <p className="mt-1 text-xs text-slate-500">
-                          {row.target_type || 'service'} • Invoice: <span className="font-medium text-brand-navy">{getCommissionInvoiceLabel(row)}</span>
+                          {row.target_type || 'service'} • Agent: <span className="font-medium text-brand-navy">{row.agent_name || 'Unknown Agent'}</span> • Invoice: <span className="font-medium text-brand-navy">{getCommissionInvoiceLabel(row)}</span>
                         </p>
                       </div>
 
@@ -1594,6 +1640,31 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
                                   />
                                 </label>
 
+                                <fieldset className="rounded-lg border border-slate-200 bg-slate-50 p-2">
+                                  <legend className="px-1 text-[11px] font-semibold text-slate-600">Module permissions</legend>
+                                  <div className="grid grid-cols-2 gap-x-3 gap-y-2">
+                                    {availableModules.map((module) => (
+                                      <label key={module.id} className="flex items-start gap-1.5 text-[11px] text-slate-600">
+                                        <input
+                                          type="checkbox"
+                                          checked={Boolean(member.permissions?.[module.id])}
+                                          onChange={(event) => handlePermissionChange(member.id, module.id, event.target.checked)}
+                                          className="mt-0.5 accent-amber-500"
+                                        />
+                                        <span>{module.label}</span>
+                                      </label>
+                                    ))}
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSavePermissions(member)}
+                                    disabled={savingPermissionsFor === member.id}
+                                    className="mt-3 rounded-lg bg-brand-navy px-2.5 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                                  >
+                                    {savingPermissionsFor === member.id ? 'Saving...' : 'Save Permissions'}
+                                  </button>
+                                </fieldset>
+
                                 <button
                                   type="button"
                                   onClick={() => handleRemoveMember(member.id)}
@@ -1712,7 +1783,7 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
           <div className="grid gap-4 md:grid-cols-2">
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Agent</div>
-              <div className="mt-2 text-base font-semibold text-brand-navy">{selectedPaidCommission.agent_name || 'Agent'}</div>
+              <div className="mt-2 text-base font-semibold text-brand-navy">{selectedPaidCommission.agent_name || selectedPaidCommission.profiles?.full_name || 'Unknown Agent'}</div>
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -1726,7 +1797,7 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
           <div className="grid gap-4 md:grid-cols-2">
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Invoice reference</div>
-              <div className="mt-2 font-mono text-sm font-semibold text-brand-navy">{selectedPaidCommission.invoice_reference || 'Manual commission'}</div>
+              <div className="mt-2 font-mono text-sm font-semibold text-brand-navy">{selectedPaidCommission.invoice_reference || selectedPaidCommission.invoices?.reference || selectedPaidCommission.invoices?.invoice_number || 'N/A'}</div>
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -1739,7 +1810,9 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
               <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Payout date</div>
               <div className="mt-2 text-sm font-medium text-brand-navy">
-                {selectedPaidCommission.paid_at ? new Date(selectedPaidCommission.paid_at).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}
+                {selectedPaidCommission.paid_at && !Number.isNaN(new Date(selectedPaidCommission.paid_at).getTime())
+                  ? new Date(selectedPaidCommission.paid_at).toLocaleDateString('en-GB')
+                  : '—'}
               </div>
             </div>
 

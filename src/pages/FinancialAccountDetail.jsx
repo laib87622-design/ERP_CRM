@@ -4,6 +4,8 @@ import { ArrowLeft, Building2, CreditCard, Landmark, Pencil, Trash2, Wallet } fr
 import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/currency';
 
+const paymentMethodOptions = ['Cash', 'Bank Transfer', 'CCP', 'Credit Card', 'BaridiMob'];
+
 const emptyForm = {
   label: '',
   currency: 'DZD',
@@ -12,6 +14,7 @@ const emptyForm = {
   bank_name: '',
   iban: '',
   swift_bic: '',
+  accepted_payment_methods: [],
 };
 
 export default function FinancialAccountDetail() {
@@ -63,6 +66,9 @@ export default function FinancialAccountDetail() {
         bank_name: accountRes.data.bank_name || '',
         iban: accountRes.data.iban || '',
         swift_bic: accountRes.data.swift_bic || '',
+        accepted_payment_methods: Array.isArray(accountRes.data.accepted_payment_methods)
+          ? accountRes.data.accepted_payment_methods
+          : [],
       });
     } catch (err) {
       setError(err.message || 'Unable to load account details.');
@@ -111,6 +117,7 @@ export default function FinancialAccountDetail() {
           bank_name: form.bank_name.trim(),
           iban: form.iban.trim(),
           swift_bic: form.swift_bic.trim(),
+          accepted_payment_methods: form.accepted_payment_methods,
         })
         .eq('id', accountId);
 
@@ -306,6 +313,30 @@ export default function FinancialAccountDetail() {
                   onChange={handleChange}
                   className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 text-brand-navy outline-none focus:border-brand-gold"
                 />
+              </div>
+
+              <div className="space-y-2 md:col-span-2">
+                <label className="text-sm font-medium text-brand-navy">Accepted Payment Methods</label>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {paymentMethodOptions.map((method) => (
+                    <label key={method} className="flex items-center gap-2 rounded-xl border border-slate-200 bg-brand-surface px-3 py-2 text-sm text-brand-navy">
+                      <input
+                        type="checkbox"
+                        checked={form.accepted_payment_methods.includes(method)}
+                        onChange={() => setForm((prev) => {
+                          const selected = prev.accepted_payment_methods || [];
+                          return {
+                            ...prev,
+                            accepted_payment_methods: selected.includes(method)
+                              ? selected.filter((item) => item !== method)
+                              : [...selected, method],
+                          };
+                        })}
+                      />
+                      <span>{method}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
             </div>
 

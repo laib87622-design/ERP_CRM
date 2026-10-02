@@ -271,30 +271,26 @@ export default function ProposalBuilder({ request_id }) {
     <div className="space-y-6">
       <style>{`
         @media print {
-          @page {
-            size: A4;
-            margin: 10mm;
+          body * {
+            visibility: hidden;
           }
 
-          body {
-            background: #ffffff !important;
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
+          #printable-proposal, #printable-proposal * {
+            visibility: visible;
           }
 
-          .proposal-print-shell {
-            width: 100% !important;
-            max-width: none !important;
-            margin: 0 !important;
-            box-shadow: none !important;
-            border: 0 !important;
-            background: #fff !important;
+          #printable-proposal {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            margin: 0;
+            padding: 0;
           }
 
-          .proposal-form-panel,
-          .proposal-topbar,
-          .proposal-action-bar {
-            display: none !important;
+          * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
         }
       `}</style>
@@ -588,7 +584,7 @@ export default function ProposalBuilder({ request_id }) {
           </div>
         </form>
 
-        <div className="proposal-print-shell print:block print:p-0 print:shadow-none print:bg-white print:border-0">
+        <div id="printable-proposal" className="proposal-print-shell print:block print:p-0 print:shadow-none print:bg-white print:border-0">
           <div className="overflow-hidden rounded-[30px] border border-slate-200 bg-white shadow-[0_30px_80px_rgba(15,23,42,0.08)] print:rounded-none print:border-0 print:shadow-none">
             <div className="border-b border-slate-200 bg-gradient-to-r from-[#0f172a] via-[#13213c] to-[#1b2d4a] p-6 text-white print:bg-white print:p-4 print:text-slate-900">
               <div className="flex items-center justify-between gap-4 print:items-start">

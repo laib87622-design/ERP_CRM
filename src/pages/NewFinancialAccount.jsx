@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Building2, Landmark, Plus, Save } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
-const paymentMethodOptions = ['Cash', 'Bank Transfer', 'Credit Card', 'BaridiMob'];
+const paymentMethodOptions = ['Cash', 'Bank Transfer', 'CCP', 'Credit Card', 'BaridiMob'];
 
 const defaultForm = {
   label: '',

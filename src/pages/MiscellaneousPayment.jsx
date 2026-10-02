@@ -3,9 +3,15 @@ import { ChevronRight, Landmark, Plus, Wallet } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 
+const getCurrentLocalDateTime = () => {
+  const now = new Date();
+  now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+  return now.toISOString().slice(0, 16);
+};
+
 const defaultForm = {
   direction: 'debit',
-  operation_date: new Date().toISOString().slice(0, 10),
+  operation_date: getCurrentLocalDateTime(),
   description: '',
   amount: '',
   account_id: '',
@@ -35,7 +41,7 @@ export default function MiscellaneousPayment() {
 
         const { data, error: fetchError } = await supabase
           .from('financial_accounts')
-          .select('id, label, currency')
+          .select('id, label, currency, current_balance')
           .order('label', { ascending: true });
 
         if (fetchError) throw fetchError;
@@ -64,9 +70,15 @@ export default function MiscellaneousPayment() {
     }
 
     const amount = Number(form.amount || 0);
+    const selectedAccount = accounts.find((account) => account.id === form.account_id);
 
     if (!form.account_id) {
       setError('Please select a bank account.');
+      return;
+    }
+
+    if (!selectedAccount) {
+      setError('Please select a valid source account.');
       return;
     }
 
@@ -75,15 +87,34 @@ export default function MiscellaneousPayment() {
       return;
     }
 
+    const normalizedDirection = form.direction === 'credit' ? 'credit' : 'debit';
+    const currentBalance = parseFloat(selectedAccount.current_balance) || 0;
+    if (normalizedDirection === 'debit' && amount > currentBalance) {
+      setError(`Insufficient funds! This account only has ${currentBalance} ${selectedAccount.currency || 'DA'} available.`);
+      return;
+    }
+
     try {
       setSaving(true);
       setError('');
       setSuccess('');
 
-      const normalizedDirection = form.direction === 'credit' ? 'credit' : 'debit';
       const debitValue = normalizedDirection === 'debit' ? amount : 0;
       const creditValue = normalizedDirection === 'credit' ? amount : 0;
       const { data: userData } = await supabase.auth.getUser();
+
+      const { data: accountData, error: accountError } = await supabase
+        .from('financial_accounts')
+        .select('current_balance')
+        .eq('id', form.account_id)
+        .single();
+
+      if (accountError) throw accountError;
+
+      const freshBalance = Number(accountData?.current_balance || 0);
+      if (normalizedDirection === 'debit' && amount > freshBalance) {
+        throw new Error(`Insufficient funds! This account only has ${freshBalance} ${selectedAccount.currency || 'DA'} available.`);
+      }
 
       const { data: insertedEntry, error: insertError } = await supabase
         .from('bank_entries')
@@ -105,16 +136,7 @@ export default function MiscellaneousPayment() {
 
       if (insertError) throw insertError;
 
-      const { data: accountData, error: accountError } = await supabase
-        .from('financial_accounts')
-        .select('current_balance')
-        .eq('id', form.account_id)
-        .single();
-
-      if (accountError) throw accountError;
-
-      const currentBalance = Number(accountData?.current_balance || 0);
-      const nextBalance = currentBalance + creditValue - debitValue;
+      const nextBalance = freshBalance + creditValue - debitValue;
 
       const { error: updateError } = await supabase
         .from('financial_accounts')
@@ -124,7 +146,7 @@ export default function MiscellaneousPayment() {
       if (updateError) throw updateError;
 
       setSuccess('Payment recorded successfully.');
-      setForm(defaultForm);
+      setForm({ ...defaultForm, operation_date: getCurrentLocalDateTime() });
       setTimeout(() => navigate('/bank/entries'), 500);
     } catch (err) {
       setError(err.message || 'Unable to record payment.');
@@ -178,7 +200,7 @@ export default function MiscellaneousPayment() {
             <div className="space-y-2">
               <label className="text-sm font-medium text-brand-navy">Date</label>
               <input
-                type="date"
+                type="datetime-local"
                 name="operation_date"
                 value={form.operation_date}
                 onChange={handleChange}

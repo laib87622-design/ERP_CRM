@@ -384,6 +384,7 @@ export default function Suppliers() {
 
     const amount = Number(paymentForm.amount);
     const accountId = paymentForm.account_id || financialAccounts[0]?.id || '';
+    const sourceAccount = financialAccounts.find((account) => account.id === accountId);
 
     if (!Number.isFinite(amount) || amount <= 0) {
       setError('Payment amount must be greater than zero.');
@@ -395,11 +396,22 @@ export default function Suppliers() {
       return;
     }
 
+    if (!sourceAccount) {
+      setError('Please select a valid source account.');
+      return;
+    }
+
     const currentDebt = Number(selectedSupplierForPayment.supplier_debt || 0);
     const amountToApply = Math.min(amount, currentDebt || amount);
 
     if (!currentDebt || amountToApply <= 0) {
       setError('This supplier has no debt to pay.');
+      return;
+    }
+
+    const currentBalance = parseFloat(sourceAccount.current_balance) || 0;
+    if (amountToApply > currentBalance) {
+      setError(`Insufficient funds! This account only has ${currentBalance} ${sourceAccount.currency || 'DA'} available.`);
       return;
     }
 

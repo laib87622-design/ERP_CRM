@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, Link } from 'react-router-dom';
 import { Bell, Menu, Globe, X, Sun, Moon } from 'lucide-react';
 import './index.css';
-import airvoyLogo from './assets/airvoy.jpeg';
 import { deliverPushNotification, notificationChannels } from './lib/notifications';
+import { fetchAgencySettings } from './lib/agencySettings';
 import Sidebar from './components/layout/Sidebar';
+import ProtectedRoute from './components/ProtectedRoute';
 import Bank from './pages/Bank';
 import BankEntriesLedger from './pages/BankEntriesLedger';
 import BookingDetail from './pages/BookingDetail';
@@ -33,6 +34,7 @@ import TaskDetail from './pages/TaskDetail';
 import Tasks from './pages/Tasks';
 import TaskManager from './pages/TaskManager';
 import ProposalBuilder from './pages/ProposalBuilder';
+import AgentProfile from './pages/AgentProfile';
 import { supabase } from './lib/supabase';
 
 const labels = {
@@ -52,7 +54,6 @@ const labels = {
     bank: 'Bank',
     cashFlow: 'Cash Flow',
     reconciliation: 'Reconciliation',
-    profileLabel: 'Oussama M.',
     switchToArabic: 'عربي',
     switchToEnglish: 'EN',
     overview: 'Overview',
@@ -78,7 +79,6 @@ const labels = {
     bank: 'البنك',
     cashFlow: 'التدفق النقدي',
     reconciliation: 'المطابقة',
-    profileLabel: 'عثمان م.',
     switchToArabic: 'عربي',
     switchToEnglish: 'EN',
     overview: 'نظرة عامة',
@@ -102,6 +102,8 @@ function App() {
   });
   const [session, setSession] = useState(null);
   const [authReady, setAuthReady] = useState(false);
+  const [agency, setAgency] = useState(null);
+  const [userProfile, setUserProfile] = useState(null);
   const [notifications, setNotifications] = useState([]);
   const [notificationFilter, setNotificationFilter] = useState('all');
   const [showNotificationCenter, setShowNotificationCenter] = useState(false);
@@ -318,6 +320,56 @@ function App() {
   }, []);
 
   useEffect(() => {
+    let isActive = true;
+
+    const fetchLayoutData = async () => {
+      if (!supabase || !session?.user?.id) {
+        setAgency(null);
+        setUserProfile(null);
+        return;
+      }
+
+      try {
+        const [agencyData, profileResult] = await Promise.all([
+          fetchAgencySettings(),
+          supabase
+            .from('profiles')
+            .select('full_name, role, avatar_url, permissions')
+            .eq('id', session.user.id)
+            .maybeSingle(),
+        ]);
+
+        if (!isActive) return;
+        setAgency(agencyData);
+
+        if (!profileResult.error) {
+          setUserProfile(profileResult.data || null);
+          return;
+        }
+
+        const { data: profileData, error: fallbackError } = await supabase
+          .from('profiles')
+          .select('full_name, role, permissions')
+          .eq('id', session.user.id)
+          .maybeSingle();
+
+        if (!isActive) return;
+        setUserProfile(fallbackError ? null : profileData ? { ...profileData, avatar_url: null } : null);
+      } catch (error) {
+        if (!isActive) return;
+        setAgency(null);
+        setUserProfile(null);
+        console.error('Unable to load layout profile data:', error);
+      }
+    };
+
+    fetchLayoutData();
+    return () => {
+      isActive = false;
+    };
+  }, [session?.user?.id]);
+
+  useEffect(() => {
     const loadNotifications = async () => {
       if (!supabase || !session?.user?.id) {
         setNotifications([]);
@@ -367,7 +419,7 @@ function App() {
         dir={isRTL ? 'rtl' : 'ltr'}
         lang={language}
       >
-        <Sidebar isOpen={isSidebarOpen} language={language} ui={ui} isDarkMode={isDarkMode} />
+        <Sidebar isOpen={isSidebarOpen} language={language} ui={ui} isDarkMode={isDarkMode} agency={agency} userProfile={userProfile} />
 
         <div className="flex flex-1 flex-col">
           <header className={`flex h-16 items-center justify-between border-b px-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-[#0f172a] text-slate-100' : 'border-gray-200 bg-brand-card text-brand-navy'}`}>
@@ -528,54 +580,66 @@ function App() {
                 {language === 'en' ? 'Logout' : 'تسجيل الخروج'}
               </button>
 
-              <div className="flex items-center gap-3">
-                <span className="font-sans font-medium text-brand-navy">{ui.profileLabel}</span>
-                <img
-                  src={airvoyLogo}
-                  alt="Airvoy brand"
-                  className="h-10 w-10 rounded-full border-2 border-brand-gold object-cover"
-                />
-              </div>
+              <Link
+                to="/profile"
+                className={`flex items-center gap-3 rounded-lg border border-transparent p-2 transition-colors ${isDarkMode ? 'text-slate-100 hover:border-slate-600 hover:bg-slate-800' : 'text-slate-700 hover:border-slate-200 hover:bg-slate-50'}`}
+              >
+                <span className="hidden text-sm font-semibold md:block">
+                  {userProfile?.full_name || (language === 'en' ? 'Loading...' : 'جارٍ التحميل...')}
+                </span>
+                {userProfile?.avatar_url ? (
+                  <img
+                    src={userProfile.avatar_url}
+                    alt="Profile"
+                    className="h-9 w-9 rounded-full border border-slate-200 object-cover"
+                  />
+                ) : (
+                  <div className="flex h-9 w-9 items-center justify-center rounded-full border border-amber-200 bg-amber-100 font-bold text-amber-700">
+                    {userProfile?.full_name ? userProfile.full_name.charAt(0).toUpperCase() : 'U'}
+                  </div>
+                )}
+              </Link>
             </div>
           </header>
 
           <main className={`flex-1 overflow-y-auto p-8 transition-colors ${isDarkMode ? 'bg-[#0a1120]' : 'bg-brand-surface'}`}>
             <Routes>
-              <Route path="/" element={<DashboardHome language={language} ui={ui} />} />
+              <Route path="/" element={<ProtectedRoute requiredModule="dashboard"><DashboardHome language={language} ui={ui} /></ProtectedRoute>} />
               <Route path="/login" element={<Login language={language} setLanguage={setLanguage} />} />
-              <Route path="/clients" element={<Clients language={language} ui={ui} />} />
-              <Route path="/clients/:clientId" element={<ClientDetail />} />
-              <Route path="/bookings" element={<Bookings language={language} ui={ui} onNotification={addNotification} />} />
-              <Route path="/bookings/:bookingId" element={<BookingDetail />} />
-              <Route path="/packages" element={<Packages language={language} ui={ui} />} />
-              <Route path="/packages/:packageId" element={<PackageDetail />} />
-              <Route path="/invoices" element={<Invoices language={language} ui={ui} />} />
-              <Route path="/invoices/:invoiceId" element={<InvoiceDetail />} />
-              <Route path="/suppliers" element={<Suppliers language={language} ui={ui} />} />
-              <Route path="/suppliers/:supplierId" element={<SupplierDetail />} />
-              <Route path="/tasks" element={<Tasks language={language} ui={ui} />} />
-              <Route path="/task-manager" element={<TaskManager />} />
-              <Route path="/proposals/:requestId" element={<ProposalBuilder />} />
-              <Route path="/tasks/:taskId" element={<TaskDetail />} />
-              <Route path="/marketing" element={<Marketing language={language} ui={ui} />} />
-              <Route path="/services" element={<Services language={language} ui={ui} />} />
-              <Route path="/service-types" element={<ServiceTypes language={language} ui={ui} />} />
-              <Route path="/settings" element={<Navigate to="/settings/agency" replace />} />
-              <Route path="/settings/agency" element={<AgencySettings language={language} ui={ui} activeSection="agency" />} />
-              <Route path="/settings/bank" element={<AgencySettings language={language} ui={ui} activeSection="bank" />} />
-              <Route path="/settings/package-types" element={<AgencySettings language={language} ui={ui} activeSection="package" />} />
-              <Route path="/settings/commission" element={<AgencySettings language={language} ui={ui} activeSection="commission" />} />
-              <Route path="/settings/commission-payouts" element={<AgencySettings language={language} ui={ui} activeSection="commission_payouts" />} />
-              <Route path="/settings/commission-payouts/:commissionId" element={<AgencySettings language={language} ui={ui} activeSection="commission_payouts" />} />
-              <Route path="/settings/team" element={<AgencySettings language={language} ui={ui} activeSection="team" />} />
-              <Route path="/role-dashboard" element={<RoleDashboard language={language} ui={ui} />} />
-              <Route path="/bank" element={<Bank language={language} ui={ui} />} />
-              <Route path="/bank/new-account" element={<NewFinancialAccount language={language} />} />
-              <Route path="/bank/entries" element={<BankEntriesLedger language={language} />} />
-              <Route path="/bank/internal-transfer" element={<InternalTransfer language={language} />} />
-              <Route path="/bank/miscellaneous-payment" element={<MiscellaneousPayment language={language} />} />
-              <Route path="/bank/accounts/:accountId" element={<FinancialAccountDetail language={language} />} />
-              <Route path="/cash-flow" element={<CashFlowReport language={language} ui={ui} />} />
+              <Route path="/clients" element={<ProtectedRoute requiredModule="clients"><Clients language={language} ui={ui} /></ProtectedRoute>} />
+              <Route path="/clients/:clientId" element={<ProtectedRoute requiredModule="clients"><ClientDetail /></ProtectedRoute>} />
+              <Route path="/bookings" element={<ProtectedRoute requiredModule="clients"><Bookings language={language} ui={ui} onNotification={addNotification} /></ProtectedRoute>} />
+              <Route path="/bookings/:bookingId" element={<ProtectedRoute requiredModule="clients"><BookingDetail /></ProtectedRoute>} />
+              <Route path="/packages" element={<ProtectedRoute requiredModule="packages"><Packages language={language} ui={ui} /></ProtectedRoute>} />
+              <Route path="/packages/:packageId" element={<ProtectedRoute requiredModule="packages"><PackageDetail /></ProtectedRoute>} />
+              <Route path="/invoices" element={<ProtectedRoute requiredModule="finance"><Invoices language={language} ui={ui} /></ProtectedRoute>} />
+              <Route path="/invoices/:invoiceId" element={<ProtectedRoute requiredModule="finance"><InvoiceDetail /></ProtectedRoute>} />
+              <Route path="/suppliers" element={<ProtectedRoute requiredModule="finance"><Suppliers language={language} ui={ui} /></ProtectedRoute>} />
+              <Route path="/suppliers/:supplierId" element={<ProtectedRoute requiredModule="finance"><SupplierDetail /></ProtectedRoute>} />
+              <Route path="/tasks" element={<ProtectedRoute requiredModule="workflow"><Tasks language={language} ui={ui} /></ProtectedRoute>} />
+              <Route path="/task-manager" element={<ProtectedRoute requiredModule="workflow"><TaskManager /></ProtectedRoute>} />
+              <Route path="/proposals/:requestId" element={<ProtectedRoute requiredModule="workflow"><ProposalBuilder /></ProtectedRoute>} />
+              <Route path="/tasks/:taskId" element={<ProtectedRoute requiredModule="workflow"><TaskDetail /></ProtectedRoute>} />
+              <Route path="/marketing" element={<ProtectedRoute requiredModule="workflow"><Marketing language={language} ui={ui} /></ProtectedRoute>} />
+              <Route path="/services" element={<ProtectedRoute requiredModule="workflow"><Services language={language} ui={ui} /></ProtectedRoute>} />
+              <Route path="/service-types" element={<ProtectedRoute requiredModule="packages"><ServiceTypes language={language} ui={ui} /></ProtectedRoute>} />
+              <Route path="/settings" element={<ProtectedRoute requiredModule="settings"><Navigate to="/settings/agency" replace /></ProtectedRoute>} />
+              <Route path="/settings/agency" element={<ProtectedRoute requiredModule="settings"><AgencySettings language={language} ui={ui} activeSection="agency" /></ProtectedRoute>} />
+              <Route path="/settings/bank" element={<ProtectedRoute requiredModule="settings"><AgencySettings language={language} ui={ui} activeSection="bank" /></ProtectedRoute>} />
+              <Route path="/settings/package-types" element={<ProtectedRoute requiredModule="settings"><AgencySettings language={language} ui={ui} activeSection="package" /></ProtectedRoute>} />
+              <Route path="/settings/commission" element={<ProtectedRoute requiredModule="settings"><AgencySettings language={language} ui={ui} activeSection="commission" /></ProtectedRoute>} />
+              <Route path="/settings/commission-payouts" element={<ProtectedRoute requiredModule="settings"><AgencySettings language={language} ui={ui} activeSection="commission_payouts" /></ProtectedRoute>} />
+              <Route path="/settings/commission-payouts/:commissionId" element={<ProtectedRoute requiredModule="settings"><AgencySettings language={language} ui={ui} activeSection="commission_payouts" /></ProtectedRoute>} />
+              <Route path="/settings/team" element={<ProtectedRoute requiredModule="settings"><AgencySettings language={language} ui={ui} activeSection="team" /></ProtectedRoute>} />
+              <Route path="/role-dashboard" element={<ProtectedRoute requiredModule="settings"><RoleDashboard language={language} ui={ui} /></ProtectedRoute>} />
+              <Route path="/profile" element={<ProtectedRoute><AgentProfile /></ProtectedRoute>} />
+              <Route path="/bank" element={<ProtectedRoute requiredModule="finance"><Bank language={language} ui={ui} /></ProtectedRoute>} />
+              <Route path="/bank/new-account" element={<ProtectedRoute requiredModule="finance"><NewFinancialAccount language={language} /></ProtectedRoute>} />
+              <Route path="/bank/entries" element={<ProtectedRoute requiredModule="finance"><BankEntriesLedger language={language} /></ProtectedRoute>} />
+              <Route path="/bank/internal-transfer" element={<ProtectedRoute requiredModule="finance"><InternalTransfer language={language} /></ProtectedRoute>} />
+              <Route path="/bank/miscellaneous-payment" element={<ProtectedRoute requiredModule="finance"><MiscellaneousPayment /></ProtectedRoute>} />
+              <Route path="/bank/accounts/:accountId" element={<ProtectedRoute requiredModule="finance"><FinancialAccountDetail language={language} /></ProtectedRoute>} />
+              <Route path="/cash-flow" element={<ProtectedRoute requiredModule="finance"><CashFlowReport language={language} ui={ui} /></ProtectedRoute>} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </main>

@@ -148,19 +148,24 @@ export async function openInvoicePdf(invoice, client = null) {
     const clientEmail = resolvedClient?.email || invoice?.client_email || '—';
     const clientPhone = resolvedClient?.phone || invoice?.client_phone || '—';
     const clientReference = resolvedClient?.reference || invoice?.client_reference || '—';
-    const paymentMethodLabel =
-      invoice?.payment_method === 'credit_card'
-        ? 'Credit Card'
-        : invoice?.payment_method === 'baridimob'
-          ? 'BaridiMob'
-          : invoice?.payment_method === 'cash'
-            ? 'Cash'
-            : invoice?.payment_method === 'bank_transfer'
-              ? 'Bank Transfer'
-              : invoice?.payment_method || 'Cash';
-    const paymentMethodLine = invoice?.status === 'paid' && invoice?.payment_method
-      ? `<div style="margin-top: 10px; font-size: 13px; color: #0f172a; font-weight: 700;">Payment Method: ${paymentMethodLabel}</div>`
-      : '';
+    const paymentMethodValue = String(invoice?.payment_method || '').trim();
+    const normalizedPaymentMethod = paymentMethodValue.toLowerCase().replace(/[\s-]+/g, '_');
+    const paymentMethodLabels = {
+      cash: 'Cash',
+      bank_transfer: 'Bank Transfer',
+      ccp: 'CCP',
+      credit_card: 'Credit Card',
+      baridimob: 'BaridiMob',
+    };
+    const paymentMethodLabel = paymentMethodLabels[normalizedPaymentMethod]
+      || paymentMethodValue.replace(/[&<>"']/g, (character) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+      })[character]);
+    const paymentMethodLine = `<div style="margin-top: 10px; font-size: 13px; color: #0f172a; font-weight: 700;">Payment Method: ${paymentMethodLabel || 'Not specified'}</div>`;
     const agencyName = agency?.agency_name || 'AIRVOY';
     const agencyAddress = [agency?.address, agency?.city, agency?.wilaya].filter(Boolean).join(', ') || 'Algiers, Algeria';
     const agencyPhone = agency?.phone || '—';

@@ -20,9 +20,8 @@ import {
   ArrowLeftRight,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import airvoyLogo from '../../assets/airvoy.jpeg';
 
-export default function Sidebar({ isOpen, ui, isDarkMode, language = 'en' }) {
+export default function Sidebar({ isOpen, ui, isDarkMode, language = 'en', agency, userProfile }) {
   const location = useLocation();
   const navigate = useNavigate();
   const [bankGroupOpen, setBankGroupOpen] = useState(false);
@@ -93,42 +92,51 @@ export default function Sidebar({ isOpen, ui, isDarkMode, language = 'en' }) {
 
   const t = translations[language] || translations.en;
 
+  const isAdmin = userProfile?.role === 'super_admin';
+  const permissions = userProfile?.permissions || {};
+  const canViewModule = (moduleId) => isAdmin || Boolean(permissions[moduleId]);
+
   const topSections = [
     {
+      id: 'operations',
       label: t.operations,
       items: [
-        { key: 'dashboard', icon: Home, path: '/' },
-        { key: 'clients', icon: Users, path: '/clients' },
-        { key: 'bookings', icon: Briefcase, path: '/bookings' },
-        { key: 'packages', icon: Box, path: '/packages' },
+        { key: 'dashboard', icon: Home, path: '/', permission: 'dashboard' },
+        { key: 'clients', icon: Users, path: '/clients', permission: 'clients' },
+        { key: 'bookings', icon: Briefcase, path: '/bookings', permission: 'clients' },
+        { key: 'packages', icon: Box, path: '/packages', permission: 'packages' },
       ],
     },
     {
+      id: 'finance',
       label: t.finance,
       items: [
-        { key: 'invoices', icon: FileText, path: '/invoices' },
+        { key: 'invoices', icon: FileText, path: '/invoices', permission: 'finance' },
       ],
       custom: true,
     },
     {
+      id: 'network',
       label: t.network,
       items: [
-        { key: 'suppliers', icon: Truck, path: '/suppliers' },
-        { key: 'serviceTypes', icon: Tags, path: '/service-types' },
+        { key: 'suppliers', icon: Truck, path: '/suppliers', permission: 'finance' },
+        { key: 'serviceTypes', icon: Tags, path: '/service-types', permission: 'packages' },
       ],
     },
     {
+      id: 'workflow',
       label: t.workflow,
       items: [
-        { key: 'services', icon: Layers, path: '/services' },
-        { key: 'taskManager', icon: Briefcase, path: '/task-manager', label: 'Task Manager' },
-        { key: 'marketing', icon: Megaphone, path: '/marketing' },
+        { key: 'services', icon: Layers, path: '/services', permission: 'workflow' },
+        { key: 'taskManager', icon: Briefcase, path: '/task-manager', label: 'Task Manager', permission: 'workflow' },
+        { key: 'marketing', icon: Megaphone, path: '/marketing', permission: 'workflow' },
       ],
     },
     {
+      id: 'admin',
       label: t.admin,
       items: [
-        { key: 'employees', icon: Users, path: '/role-dashboard' },
+        { key: 'employees', icon: Users, path: '/role-dashboard', permission: 'settings' },
       ],
     },
   ];
@@ -173,15 +181,21 @@ export default function Sidebar({ isOpen, ui, isDarkMode, language = 'en' }) {
   return (
     <aside className={`${isOpen ? 'w-72' : 'w-20'} flex h-screen shrink-0 flex-col overflow-hidden transition-all duration-300 ${isDarkMode ? 'bg-[#0a1120] text-brand-surface' : 'bg-brand-navy text-brand-surface'}`}>
       <div className="flex h-16 items-center justify-center border-b border-gray-800">
-        <div className={`flex items-center justify-center transition-all ${isOpen ? 'gap-3' : 'gap-0'}`}>
-          <img
-            src={airvoyLogo}
-            alt="Airvoy logo"
-            className={`${isOpen ? 'h-10 w-10' : 'h-8 w-8'} rounded-xl object-cover shadow-sm`}
-          />
+            <div className={`flex min-w-0 items-center justify-center transition-all ${isOpen ? 'gap-3 px-3' : 'gap-0'}`}>
+              {agency?.logo_url ? (
+                <img
+                  src={agency.logo_url}
+                  alt={`${agency.agency_name || 'Agency'} logo`}
+                  className={`${isOpen ? 'h-10 w-10' : 'h-8 w-8'} shrink-0 rounded-md object-contain`}
+                />
+              ) : (
+                <div className={`${isOpen ? 'h-10 w-10' : 'h-8 w-8'} flex shrink-0 items-center justify-center rounded-md bg-slate-800 font-bold text-amber-500`}>
+                  {(agency?.agency_name || 'AIRVOY').charAt(0).toUpperCase()}
+                </div>
+              )}
           {isOpen && (
-            <h1 className="font-serif font-bold text-brand-gold text-xl">
-              AIRVOY
+                <h1 className="truncate font-serif text-xl font-bold text-brand-gold">
+                  {agency?.agency_name || 'AIRVOY'}
             </h1>
           )}
         </div>
@@ -189,8 +203,13 @@ export default function Sidebar({ isOpen, ui, isDarkMode, language = 'en' }) {
 
       <nav className="flex-1 overflow-hidden py-2">
         <div className="h-full space-y-2 overflow-y-auto px-2.5 pb-24 scrollbar-hide">
-          {topSections.map((section) => (
-            <div key={section.label}>
+          {topSections.map((section) => {
+            const visibleItems = section.items.filter((item) => canViewModule(item.permission));
+            const showCustom = section.custom && canViewModule('finance');
+            if (visibleItems.length === 0 && !showCustom) return null;
+
+            return (
+            <div key={section.id}>
               {section.label && (
                 <div className="mt-3 mb-1 border-t border-white/10 pt-2 first:mt-0 first:border-t-0 first:pt-0">
                   <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-brand-gold/70">{section.label}</p>
@@ -198,7 +217,7 @@ export default function Sidebar({ isOpen, ui, isDarkMode, language = 'en' }) {
               )}
 
               <ul className="space-y-1">
-                {section.items.map((item) => {
+                {visibleItems.map((item) => {
                   const Icon = item.icon;
                   const isActive = location.pathname === item.path;
                   const label = item.label || ui?.[item.key] || item.key;
@@ -218,7 +237,7 @@ export default function Sidebar({ isOpen, ui, isDarkMode, language = 'en' }) {
                   );
                 })}
 
-                {section.custom && (
+                {showCustom && (
                   <li>
                     <button
                       type="button"
@@ -272,7 +291,7 @@ export default function Sidebar({ isOpen, ui, isDarkMode, language = 'en' }) {
                   </li>
                 )}
 
-                {section.label === 'ADMIN' && (
+                {section.id === 'admin' && canViewModule('settings') && (
                   <li>
                     <button
                       type="button"
@@ -326,7 +345,8 @@ export default function Sidebar({ isOpen, ui, isDarkMode, language = 'en' }) {
                 )}
               </ul>
             </div>
-          ))}
+            );
+          })}
         </div>
       </nav>
     </aside>
