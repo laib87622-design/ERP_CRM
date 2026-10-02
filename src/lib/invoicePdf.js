@@ -1,6 +1,13 @@
 import { supabase } from './supabase';
 import { fetchAgencySettings, getPackageTypeDescription } from './agencySettings';
-import airvoyLogo from '../assets/airvoy.jpeg';
+
+const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
+})[character]);
 
 const formatCurrencyDzd = (value) =>
   new Intl.NumberFormat('fr-DZ', {
@@ -166,7 +173,11 @@ export async function openInvoicePdf(invoice, client = null) {
         "'": '&#39;',
       })[character]);
     const paymentMethodLine = `<div style="margin-top: 10px; font-size: 13px; color: #0f172a; font-weight: 700;">Payment Method: ${paymentMethodLabel || 'Not specified'}</div>`;
-    const agencyName = agency?.agency_name || 'AIRVOY';
+    const agencyName = escapeHtml(agency?.agency_name || 'AGENCY');
+    const agencyLogoUrl = String(agency?.logo_url || '').trim();
+    const agencyLogoHtml = agencyLogoUrl
+      ? `<img src="${escapeHtml(agencyLogoUrl)}" alt="${agencyName} logo" />`
+      : `<div class="brand-placeholder">${escapeHtml(agencyName.charAt(0) || 'A')}</div>`;
     const agencyAddress = [agency?.address, agency?.city, agency?.wilaya].filter(Boolean).join(', ') || 'Algiers, Algeria';
     const agencyPhone = agency?.phone || '—';
     const agencyEmail = agency?.email || '—';
@@ -248,6 +259,19 @@ export async function openInvoicePdf(invoice, client = null) {
               border-radius: 16px;
               object-fit: cover;
               border: 1px solid var(--border);
+            }
+            .brand-placeholder {
+              width: 64px;
+              height: 64px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              border: 1px solid var(--border);
+              border-radius: 16px;
+              background: var(--navy);
+              color: var(--gold);
+              font-size: 24px;
+              font-weight: 700;
             }
             .brand-name {
               margin: 0;
@@ -417,9 +441,9 @@ export async function openInvoicePdf(invoice, client = null) {
           <div class="page">
             <div class="topbar">
               <div class="brand-wrap">
-                <img src="${airvoyLogo}" alt="AIRVOY" />
+                ${agencyLogoHtml}
                 <div>
-                  <h1 class="brand-name">AIRVOY</h1>
+                  <h1 class="brand-name">${agencyName}</h1>
                   <div class="brand-sub">Travel & tourism agency</div>
                 </div>
               </div>
