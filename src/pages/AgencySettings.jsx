@@ -1059,7 +1059,7 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
         base_salary: Number(inviteForm.base_salary || 0),
       };
 
-      const { data, error } = await supabase.functions.invoke('manage-user', {
+      const { data, error } = await supabase.functions.invoke('rapid-endpoint', {
         body: payload,
       });
 
