@@ -604,7 +604,7 @@ function App() {
 
           <main className={`flex-1 overflow-y-auto p-8 transition-colors ${isDarkMode ? 'bg-[#0a1120]' : 'bg-brand-surface'}`}>
             <Routes>
-              <Route path="/" element={<ProtectedRoute requiredModule="dashboard"><DashboardHome language={language} ui={ui} /></ProtectedRoute>} />
+              <Route path="/" element={<ProtectedRoute requiredModule="dashboard"><DashboardHome language={language} ui={ui} agencyName={agency?.agency_name || ''} /></ProtectedRoute>} />
               <Route path="/login" element={<Login language={language} setLanguage={setLanguage} />} />
               <Route path="/clients" element={<ProtectedRoute requiredModule="clients"><Clients language={language} ui={ui} /></ProtectedRoute>} />
               <Route path="/clients/:clientId" element={<ProtectedRoute requiredModule="clients"><ClientDetail /></ProtectedRoute>} />

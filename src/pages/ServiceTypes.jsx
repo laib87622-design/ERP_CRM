@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowUpDown, Layers, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import SecureDeleteModal from '../components/ui/SecureDeleteModal';
 
-const emptyForm = { name: '', description: '' };
+const emptyForm = { name: '', category: '', description: '' };
 const fieldTypeOptions = ['text', 'date', 'number', 'select', 'textarea'];
 const DEFAULT_TEMPLATES = {
   'Air Flight Ticket': [
@@ -77,6 +78,10 @@ export default function ServiceTypes() {
   const [error, setError] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedServiceType, setSelectedServiceType] = useState(null);
+  const [deleteRequest, setDeleteRequest] = useState(null);
+  const [categorySelect, setCategorySelect] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState('All');
+  const [searchTerm, setSearchTerm] = useState('');
   const [form, setForm] = useState(emptyForm);
   const [activeTab, setActiveTab] = useState('custom-fields');
   const [fieldDraft, setFieldDraft] = useState({
@@ -87,6 +92,20 @@ export default function ServiceTypes() {
     options: '',
   });
   const [isFieldFormOpen, setIsFieldFormOpen] = useState(false);
+
+  const existingCategories = useMemo(
+    () => [...new Set(serviceTypes.map((serviceType) => String(serviceType.category || '').trim()).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b)),
+    [serviceTypes]
+  );
+  const uniqueCategories = ['All', ...existingCategories];
+  const normalizedSearch = searchTerm.trim().toLowerCase();
+  const filteredServiceTypes = serviceTypes.filter((serviceType) => {
+    const matchesCategory = selectedCategory === 'All' || serviceType.category === selectedCategory;
+    const matchesSearch = !normalizedSearch || [serviceType.name, serviceType.category, serviceType.description]
+      .some((value) => String(value || '').toLowerCase().includes(normalizedSearch));
+    return matchesCategory && matchesSearch;
+  });
 
   const selectedTypeFields = useMemo(
     () => (selectedServiceType ? serviceFieldsByType[selectedServiceType.id] || [] : []),
@@ -120,7 +139,7 @@ export default function ServiceTypes() {
 
       const typesRes = await supabase
         .from('service_types')
-        .select('id, name, description')
+        .select('id, name, category, description')
         .order('name', { ascending: true });
 
       if (typesRes.error) throw typesRes.error;
@@ -150,6 +169,7 @@ export default function ServiceTypes() {
   const openCreateModal = () => {
     setSelectedServiceType(null);
     setForm(emptyForm);
+    setCategorySelect('');
     setError('');
     setActiveTab('custom-fields');
     setFieldDraft({ name: '', field_key: '', field_type: 'text', required: false, options: '' });
@@ -159,7 +179,16 @@ export default function ServiceTypes() {
 
   const openEditModal = (serviceType) => {
     setSelectedServiceType(serviceType);
-    setForm({ name: serviceType.name || '', description: serviceType.description || '' });
+    setCategorySelect(
+      serviceType.category && existingCategories.includes(serviceType.category)
+        ? serviceType.category
+        : serviceType.category ? '__other__' : ''
+    );
+    setForm({
+      name: serviceType.name || '',
+      category: serviceType.category || '',
+      description: serviceType.description || '',
+    });
     setError('');
     setActiveTab('custom-fields');
     setFieldDraft({ name: '', field_key: '', field_type: 'text', required: false, options: '' });
@@ -202,7 +231,11 @@ export default function ServiceTypes() {
       setSaving(true);
       setError('');
 
-      const payload = { name: form.name.trim(), description: form.description.trim() || null };
+      const payload = {
+        name: form.name.trim(),
+        category: form.category.trim() || null,
+        description: form.description.trim() || null,
+      };
       let serviceTypeId = selectedServiceType?.id;
 
       if (serviceTypeId) {
@@ -231,8 +264,6 @@ export default function ServiceTypes() {
   };
 
   const handleDelete = async (serviceType) => {
-    if (!window.confirm(`Delete the "${serviceType.name}" service type?`)) return;
-
     try {
       setSaving(true);
       setError('');
@@ -398,6 +429,16 @@ export default function ServiceTypes() {
         <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
       )}
 
+      {deleteRequest && (
+        <SecureDeleteModal
+          isOpen={Boolean(deleteRequest)}
+          onClose={() => setDeleteRequest(null)}
+          onConfirm={deleteRequest.onConfirm}
+          title={deleteRequest.title}
+          description={deleteRequest.description}
+        />
+      )}
+
       {loading ? (
         <div className="rounded-2xl border border-slate-200 bg-brand-card p-8 text-center text-sm text-slate-500">Loading...</div>
       ) : serviceTypes.length === 0 ? (
@@ -405,8 +446,46 @@ export default function ServiceTypes() {
           No service types yet. Create your first one.
         </div>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {serviceTypes.map((type) => (
+        <>
+          <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap items-center gap-2">
+              {uniqueCategories.map((category) => (
+                <button
+                  key={category}
+                  type="button"
+                  onClick={() => setSelectedCategory(category)}
+                  aria-pressed={selectedCategory === category}
+                  className={`rounded-full border px-4 py-1.5 text-sm font-medium transition-colors ${
+                    selectedCategory === category
+                      ? 'border-amber-200 bg-amber-100 text-amber-800'
+                      : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  {category}
+                </button>
+              ))}
+            </div>
+
+            <label className="relative block w-full sm:max-w-xs">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                type="search"
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder="Search service types..."
+                aria-label="Search service types"
+                className="w-full rounded-lg border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-brand-navy outline-none focus:border-brand-gold focus:ring-2 focus:ring-amber-500/20"
+              />
+            </label>
+          </div>
+
+          {filteredServiceTypes.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-brand-card p-8 text-center text-sm text-slate-500">
+              No service types match this category and search.
+            </div>
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+              {filteredServiceTypes.map((type) => (
             <div key={type.id} className="rounded-2xl border border-slate-200 bg-brand-card p-5 shadow-sm">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-start gap-3">
@@ -415,6 +494,7 @@ export default function ServiceTypes() {
                   </div>
                   <div>
                     <h3 className="text-lg font-semibold text-brand-navy">{type.name}</h3>
+                    {type.category && <p className="mt-1 text-xs font-semibold uppercase tracking-[0.12em] text-amber-700">{type.category}</p>}
                     {type.description && <p className="mt-1 text-sm text-slate-500">{type.description}</p>}
                   </div>
                 </div>
@@ -430,7 +510,11 @@ export default function ServiceTypes() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleDelete(type)}
+                    onClick={() => setDeleteRequest({
+                      title: `Delete ${type.name}?`,
+                      description: 'This permanently deletes the service type and its custom fields.',
+                      onConfirm: () => handleDelete(type),
+                    })}
                     className="rounded-lg border border-red-200 bg-red-50 p-2 text-red-600"
                     aria-label={`Delete ${type.name}`}
                   >
@@ -446,8 +530,10 @@ export default function ServiceTypes() {
                 </p>
               </div>
             </div>
-          ))}
-        </div>
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       {isModalOpen && (
@@ -476,6 +562,34 @@ export default function ServiceTypes() {
                   className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 text-brand-navy outline-none focus:border-brand-gold"
                   required
                 />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-brand-navy">Category / Group</label>
+                <select
+                  value={categorySelect}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setCategorySelect(value);
+                    setForm((prev) => ({ ...prev, category: value === '__other__' ? '' : value }));
+                  }}
+                  className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 text-brand-navy outline-none focus:border-brand-gold"
+                >
+                  <option value="">Select category</option>
+                  {existingCategories.map((category) => (
+                    <option key={category} value={category}>{category}</option>
+                  ))}
+                  <option value="__other__">Other...</option>
+                </select>
+                {categorySelect === '__other__' && (
+                  <input
+                    type="text"
+                    value={form.category}
+                    onChange={(event) => setForm((prev) => ({ ...prev, category: event.target.value }))}
+                    placeholder="Enter a new category"
+                    className="mt-2 w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 text-brand-navy outline-none focus:border-brand-gold"
+                  />
+                )}
               </div>
 
               <div>
@@ -573,7 +687,11 @@ export default function ServiceTypes() {
 
                           <button
                             type="button"
-                            onClick={() => deleteField(field.id)}
+                            onClick={() => setDeleteRequest({
+                              title: 'Delete custom field?',
+                              description: 'This permanently removes the custom field from this service type.',
+                              onConfirm: () => deleteField(field.id),
+                            })}
                             className="rounded-lg border border-red-200 bg-red-50 p-2 text-red-600"
                             aria-label={`Delete ${field.name}`}
                           >

@@ -14,6 +14,7 @@ import {
   Users,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import SecureDeleteModal from '../components/ui/SecureDeleteModal';
 import {
   buildStagesDataFromTemplate,
   computeStagesProgress,
@@ -82,6 +83,7 @@ export default function Services({ language = 'en' }) {
   const [saving, setSaving] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
+  const [deleteRequest, setDeleteRequest] = useState(null);
   const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'create' | 'edit'
   const [activeTemplate, setActiveTemplate] = useState(null);
   const [templateToCopy, setTemplateToCopy] = useState('');
@@ -113,11 +115,6 @@ export default function Services({ language = 'en' }) {
   // Shared lookups
   const [clients, setClients] = useState([]);
   const [templates, setTemplates] = useState([]);
-  const [assignMatrixOptions, setAssignMatrixOptions] = useState({
-    country_id: [],
-    visa_type_id: [],
-    professional_status: [],
-  });
 
   // Templates builder state
   const [selectedTemplateId, setSelectedTemplateId] = useState(null);
@@ -133,6 +130,10 @@ export default function Services({ language = 'en' }) {
     if (value === undefined || value === null) return null;
     const trimmed = String(value).trim();
     return trimmed && trimmed !== 'null' && trimmed !== 'undefined' ? trimmed : null;
+  };
+
+  const requestSecureDelete = (title, description, onConfirm) => {
+    setDeleteRequest({ title, description, onConfirm });
   };
 
   const sanitizeTemplateMatrixPayload = (source = {}) => ({
@@ -209,29 +210,6 @@ export default function Services({ language = 'en' }) {
     });
   };
 
-  const loadAssignMatrixOptions = async () => {
-    if (!supabase) {
-      setAssignMatrixOptions({ country_id: [], visa_type_id: [], professional_status: [] });
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from('service_templates')
-      .select('country_id, visa_type_id, professional_status')
-      .is('client_id', null);
-
-    if (error) throw error;
-
-    const collect = (key) =>
-      [...new Set((data || []).map((row) => row[key]).filter((value) => value && String(value).trim()))].sort((a, b) => a.localeCompare(b));
-
-    setAssignMatrixOptions({
-      country_id: collect('country_id'),
-      visa_type_id: collect('visa_type_id'),
-      professional_status: collect('professional_status'),
-    });
-  };
-
   const loadAll = async () => {
     try {
       setLoading(true);
@@ -242,7 +220,7 @@ export default function Services({ language = 'en' }) {
         return;
       }
 
-      await Promise.all([loadLookups(), loadClientServices(), loadTemplateMatrixOptions(), loadAssignMatrixOptions()]);
+      await Promise.all([loadLookups(), loadClientServices(), loadTemplateMatrixOptions()]);
     } catch (err) {
       setError(err.message || 'Unable to load services.');
     } finally {
@@ -275,18 +253,36 @@ export default function Services({ language = 'en' }) {
 
   const selectedClientService = clientServices.find((row) => row.id === selectedClientServiceId) || null;
 
-  const uniqueCountries = [...new Set(templates.map((template) => template.country_id).filter(Boolean))];
-  const uniqueVisas = [...new Set(templates.map((template) => template.visa_type_id).filter(Boolean))];
-  const uniqueStatuses = [...new Set(templates.map((template) => template.professional_status).filter(Boolean))];
-
-  const matrixCountryOptions = uniqueCountries.length ? uniqueCountries : matrixOptions.country_id;
-  const matrixVisaOptions = uniqueVisas.length ? uniqueVisas : matrixOptions.visa_type_id;
-  const matrixStatusOptions = uniqueStatuses.length ? uniqueStatuses : matrixOptions.professional_status;
+  const masterTemplates = templates.filter((template) => template.client_id === null || template.client_id === undefined);
+  const collectTemplateOptions = (rows, key) => [...new Set(
+    rows.map((template) => String(template[key] || '').trim()).filter(Boolean)
+  )].sort((a, b) => a.localeCompare(b));
+  const availableCountries = collectTemplateOptions(templates, 'country_id');
+  const matrixCountryOptions = availableCountries;
+  const matrixVisaOptions = collectTemplateOptions(templates, 'visa_type_id');
+  const matrixStatusOptions = collectTemplateOptions(templates, 'professional_status');
+  const assignVisaOptions = collectTemplateOptions(
+    masterTemplates.filter((template) => !assignForm.country_id || template.country_id === assignForm.country_id),
+    'visa_type_id'
+  );
+  const assignStatusOptions = collectTemplateOptions(
+    masterTemplates.filter((template) => (
+      (!assignForm.country_id || template.country_id === assignForm.country_id)
+      && (!assignForm.visa_type_id || template.visa_type_id === assignForm.visa_type_id)
+    )),
+    'professional_status'
+  );
 
   const clientUniqueCountries = [...new Set(clientServices.map((row) => row.service_templates?.country_id).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const clientUniqueVisaTypes = [...new Set(clientServices.map((row) => row.service_templates?.visa_type_id).filter(Boolean))].sort((a, b) => a.localeCompare(b));
-  const templateUniqueCountries = ['All', ...new Set(templates.filter((template) => template.client_id === null && template.country_id).map((template) => template.country_id))];
-  const templateUniqueVisas = ['All', ...new Set(templates.filter((template) => template.client_id === null && template.visa_type_id).map((template) => template.visa_type_id))];
+  const templateUniqueCountries = ['All', ...availableCountries];
+  const templateUniqueVisas = [
+    'All',
+    ...collectTemplateOptions(
+      masterTemplates.filter((template) => filterCountry === 'All' || template.country_id === filterCountry),
+      'visa_type_id'
+    ),
+  ];
 
   const filteredClientServices = clientServices.filter((workflow) => {
     const matchesCountry = countryFilter === 'All' || workflow.service_templates?.country_id === countryFilter;
@@ -305,11 +301,6 @@ export default function Services({ language = 'en' }) {
     });
     setError('');
     setIsAssignModalOpen(true);
-    try {
-      await loadAssignMatrixOptions();
-    } catch (err) {
-      setError(err.message || 'Unable to load workflow matrix options.');
-    }
   };
 
   const handleAssignSubmit = async (event) => {
@@ -442,8 +433,6 @@ export default function Services({ language = 'en' }) {
   };
 
   const deleteClientService = async (rowId) => {
-    if (!window.confirm('Remove this client service and its checklist progress?')) return;
-
     try {
       setSaving(true);
       setError('');
@@ -710,22 +699,25 @@ export default function Services({ language = 'en' }) {
   const findMasterTemplateMatrixConflict = async ({ countryValue, visaValue, professionalValue, excludeId = null }) => {
     if (!supabase) return null;
 
-    const { data, error } = await supabase
+    let query = supabase
       .from('service_templates')
       .select('id, title, country_id, visa_type_id, professional_status')
       .eq('country_id', countryValue)
       .eq('visa_type_id', visaValue)
       .eq('professional_status', professionalValue)
-      .is('client_id', null)
-      .neq('id', excludeId || '')
-      .limit(1)
-      .maybeSingle();
+      .is('client_id', null);
+
+    if (excludeId) {
+      query = query.neq('id', excludeId);
+    }
+
+    const { data, error } = await query.limit(1).maybeSingle();
 
     if (error && error.code !== 'PGRST116') throw error;
     return data || null;
   };
 
-  const addTemplate = async () => {
+  const addTemplate = async (matrixValues = {}) => {
     if (!supabase) return;
 
     try {
@@ -733,9 +725,9 @@ export default function Services({ language = 'en' }) {
       setError('');
 
       const sourceTemplate = templateToCopy ? templates.find((template) => template.id === templateToCopy) || null : null;
-      const countryValue = String(country || templateMatrix.country_id || sourceTemplate?.country_id || '').trim();
-      const visaValue = String(visaType || templateMatrix.visa_type_id || sourceTemplate?.visa_type_id || '').trim();
-      const professionalValue = String(status || templateMatrix.professional_status || sourceTemplate?.professional_status || '').trim();
+      const countryValue = String(matrixValues.countryValue ?? (country || templateMatrix.country_id || sourceTemplate?.country_id || '')).trim();
+      const visaValue = String(matrixValues.visaValue ?? (visaType || templateMatrix.visa_type_id || sourceTemplate?.visa_type_id || '')).trim();
+      const professionalValue = String(matrixValues.professionalValue ?? (status || templateMatrix.professional_status || sourceTemplate?.professional_status || '')).trim();
 
       if (!countryValue || !visaValue || !professionalValue) {
         setError('Country, visa type, and professional status are required before saving the master template matrix.');
@@ -753,15 +745,17 @@ export default function Services({ language = 'en' }) {
         return;
       }
 
-      const payload = sanitizeTemplateMatrixPayload({
-        title: draftTemplateName.trim() || sourceTemplate?.title || `${countryValue} - ${visaValue} - ${professionalValue}`,
+      const payload = {
+        ...sanitizeTemplateMatrixPayload({
         country_id: countryValue,
         visa_type_id: visaValue,
         professional_status: professionalValue,
         client_id: null,
         supplier_id: null,
         package_id: null,
-      });
+        }),
+        title: draftTemplateName.trim() || sourceTemplate?.title || `${countryValue} - ${visaValue} - ${professionalValue}`,
+      };
 
       const { data: newTemplate, error: insertError } = await supabase
         .from('service_templates')
@@ -859,7 +853,14 @@ export default function Services({ language = 'en' }) {
       setCountry('');
       setVisaType('');
       setStatus('');
+      setCountrySelect('');
+      setVisaSelect('');
+      setStatusSelect('');
+      setCountryCustom('');
+      setVisaCustom('');
+      setStatusCustom('');
       setTemplateToCopy('');
+      setWorkflow([]);
       setViewMode('edit');
       await loadTemplateMatrixOptions();
     } catch (err) {
@@ -954,8 +955,6 @@ export default function Services({ language = 'en' }) {
   };
 
   const deleteTemplate = async (templateId) => {
-    if (!window.confirm('Delete this template and its checklist structure?')) return;
-
     try {
       setSaving(true);
       setError('');
@@ -1009,8 +1008,6 @@ export default function Services({ language = 'en' }) {
   };
 
   const deleteStage = async (stageId) => {
-    if (!window.confirm('Delete this stage and all its steps/items?')) return;
-
     try {
       setSaving(true);
       const stage = workflow.find((item) => item.id === stageId);
@@ -1120,8 +1117,6 @@ export default function Services({ language = 'en' }) {
   };
 
   const deleteStep = async (stageId, stepId) => {
-    if (!window.confirm('Delete this step and all its items?')) return;
-
     try {
       setSaving(true);
       const { error: itemsError } = await supabase.from('service_items').delete().eq('step_id', stepId);
@@ -1276,7 +1271,6 @@ export default function Services({ language = 'en' }) {
   const totalStages = workflow.length;
   const totalSteps = workflow.reduce((sum, stage) => sum + (stage.steps || []).length, 0);
   const totalTemplateItems = workflow.reduce((sum, stage) => sum + (stage.steps || []).reduce((s, step) => s + (step.items || []).length, 0), 0);
-  const masterTemplates = templates.filter((template) => template.client_id === null);
   const filteredTemplates = masterTemplates.filter((template) => {
     const matchesCountry = filterCountry === 'All' || template.country_id === filterCountry;
     const matchesVisa = filterVisa === 'All' || template.visa_type_id === filterVisa;
@@ -1284,60 +1278,20 @@ export default function Services({ language = 'en' }) {
   });
 
   const handleSaveMatrix = async () => {
-    const nextCountry = (countryCustom || country).trim();
-    const nextVisaType = (visaCustom || visaType).trim();
-    const nextStatus = (statusCustom || status).trim();
+    const nextCountry = String(countrySelect === '__other__' ? countryCustom : countrySelect || country).trim();
+    const nextVisaType = String(visaSelect === '__other__' ? visaCustom : visaSelect || visaType).trim();
+    const nextStatus = String(statusSelect === '__other__' ? statusCustom : statusSelect || status).trim();
 
     if (!nextCountry || !nextVisaType || !nextStatus) {
       setError('Country, visa type, and professional status are required before saving the master template matrix.');
       return;
     }
 
-    const payload = {
-      country_id: nextCountry,
-      visa_type_id: nextVisaType,
-      professional_status: nextStatus,
-      title: `${nextCountry} - ${nextVisaType} - ${nextStatus}`,
-      client_id: null,
-    };
-
-    try {
-      setSaving(true);
-      setError('');
-
-      const { data: newTemplate, error: insertError } = await supabase
-        .from('service_templates')
-        .insert([payload])
-        .select('*')
-        .single();
-
-      if (insertError) throw insertError;
-
-      setTemplates((prev) => [...prev, newTemplate].sort((a, b) => String(a.title || '').localeCompare(String(b.title || ''))));
-      setTemplateMatrix({
-        country_id: payload.country_id,
-        visa_type_id: payload.visa_type_id,
-        professional_status: payload.professional_status,
-      });
-      setSelectedTemplateId(newTemplate.id);
-      setActiveTemplate(newTemplate);
-      setCountry('');
-      setVisaType('');
-      setStatus('');
-      setCountrySelect('');
-      setVisaSelect('');
-      setStatusSelect('');
-      setCountryCustom('');
-      setVisaCustom('');
-      setStatusCustom('');
-      setTemplateToCopy('');
-      setViewMode('edit');
-      await loadTemplateMatrixOptions();
-    } catch (err) {
-      setError(err.message || 'Unable to save template matrix.');
-    } finally {
-      setSaving(false);
-    }
+    await addTemplate({
+      countryValue: nextCountry,
+      visaValue: nextVisaType,
+      professionalValue: nextStatus,
+    });
   };
 
   const matrixFields = [
@@ -1422,6 +1376,16 @@ export default function Services({ language = 'en' }) {
         <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
       )}
 
+      {deleteRequest && (
+        <SecureDeleteModal
+          isOpen={Boolean(deleteRequest)}
+          onClose={() => setDeleteRequest(null)}
+          onConfirm={deleteRequest.onConfirm}
+          title={deleteRequest.title}
+          description={deleteRequest.description}
+        />
+      )}
+
       {mode === 'clients' ? (
         selectedClientService ? (
           <ClientServiceDetail
@@ -1504,7 +1468,11 @@ export default function Services({ language = 'en' }) {
                         type="button"
                         onClick={(event) => {
                           event.stopPropagation();
-                          deleteClientService(row.id);
+                          requestSecureDelete(
+                            'Remove client service?',
+                            'This permanently removes this client service and its checklist progress.',
+                            () => deleteClientService(row.id)
+                          );
                         }}
                         className="rounded-lg border border-red-200 bg-red-50 p-2 text-red-600"
                       >
@@ -1538,7 +1506,10 @@ export default function Services({ language = 'en' }) {
                   <label className="text-xs font-bold uppercase tracking-[0.12em] text-slate-500">Filter by Country</label>
                   <select
                     value={filterCountry}
-                    onChange={(event) => setFilterCountry(event.target.value)}
+                    onChange={(event) => {
+                      setFilterCountry(event.target.value);
+                      setFilterVisa('All');
+                    }}
                     className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-amber-400"
                   >
                     {templateUniqueCountries.map((countryOption) => (
@@ -1865,7 +1836,11 @@ export default function Services({ language = 'en' }) {
 
                   <button
                     type="button"
-                    onClick={() => deleteTemplate(selectedTemplate.id)}
+                    onClick={() => requestSecureDelete(
+                      'Delete template?',
+                      'This permanently deletes the template and its checklist structure.',
+                      () => deleteTemplate(selectedTemplate.id)
+                    )}
                     className="inline-flex items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-600"
                   >
                     <Trash2 size={14} />
@@ -1943,7 +1918,7 @@ export default function Services({ language = 'en' }) {
                           >
                             <ArrowDown size={14} />
                           </button>
-                          <button type="button" onClick={() => deleteStage(stage.id)} className="rounded-lg border border-red-200 bg-red-50 p-2 text-red-600">
+                          <button type="button" onClick={() => requestSecureDelete('Delete stage?', 'This permanently deletes the stage and all its steps and items.', () => deleteStage(stage.id))} className="rounded-lg border border-red-200 bg-red-50 p-2 text-red-600">
                             <Trash2 size={14} />
                           </button>
                         </div>
@@ -1994,7 +1969,7 @@ export default function Services({ language = 'en' }) {
                                 >
                                   <ArrowDown size={14} />
                                 </button>
-                                <button type="button" onClick={() => deleteStep(stage.id, step.id)} className="rounded-lg border border-red-200 bg-red-50 p-2 text-red-600">
+                                <button type="button" onClick={() => requestSecureDelete('Delete step?', 'This permanently deletes the step and all its items.', () => deleteStep(stage.id, step.id))} className="rounded-lg border border-red-200 bg-red-50 p-2 text-red-600">
                                   <Trash2 size={14} />
                                 </button>
                               </div>
@@ -2066,7 +2041,7 @@ export default function Services({ language = 'en' }) {
                                         </button>
                                         <button
                                           type="button"
-                                          onClick={() => deleteItem(stage.id, step.id, item.id)}
+                                          onClick={() => requestSecureDelete('Delete item?', 'This permanently deletes this workflow checklist item.', () => deleteItem(stage.id, step.id, item.id))}
                                           className="rounded-lg border border-red-200 bg-red-50 p-2 text-red-600"
                                         >
                                           <Trash2 size={14} />
@@ -2113,12 +2088,17 @@ export default function Services({ language = 'en' }) {
               <label className="mb-1 block text-sm font-medium text-brand-navy">Country</label>
               <select
                 value={assignForm.country_id}
-                onChange={(event) => setAssignForm((prev) => ({ ...prev, country_id: event.target.value }))}
+                onChange={(event) => setAssignForm((prev) => ({
+                  ...prev,
+                  country_id: event.target.value,
+                  visa_type_id: '',
+                  professional_status: '',
+                }))}
                 className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 text-sm text-brand-navy outline-none focus:border-brand-gold"
                 required
               >
                 <option value="">Select country</option>
-                {assignMatrixOptions.country_id.map((option) => (
+                {availableCountries.map((option) => (
                   <option key={option} value={option}>{option}</option>
                 ))}
               </select>
@@ -2128,12 +2108,16 @@ export default function Services({ language = 'en' }) {
               <label className="mb-1 block text-sm font-medium text-brand-navy">Visa Type</label>
               <select
                 value={assignForm.visa_type_id}
-                onChange={(event) => setAssignForm((prev) => ({ ...prev, visa_type_id: event.target.value }))}
+                onChange={(event) => setAssignForm((prev) => ({
+                  ...prev,
+                  visa_type_id: event.target.value,
+                  professional_status: '',
+                }))}
                 className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 text-sm text-brand-navy outline-none focus:border-brand-gold"
                 required
               >
                 <option value="">Select visa type</option>
-                {assignMatrixOptions.visa_type_id.map((option) => (
+                {assignVisaOptions.map((option) => (
                   <option key={option} value={option}>{option}</option>
                 ))}
               </select>
@@ -2148,7 +2132,7 @@ export default function Services({ language = 'en' }) {
                 required
               >
                 <option value="">Select professional status</option>
-                {assignMatrixOptions.professional_status.map((option) => (
+                {assignStatusOptions.map((option) => (
                   <option key={option} value={option}>{option}</option>
                 ))}
               </select>

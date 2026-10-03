@@ -31,7 +31,7 @@ const getStatusBadgeClass = (status) => {
   return statusStyles.pending;
 };
 
-export default function DashboardHome({ language = 'en' }) {
+export default function DashboardHome({ language = 'en', agencyName = '' }) {
   const labels = {
     en: {
       overview: 'Overview',
@@ -253,7 +253,7 @@ export default function DashboardHome({ language = 'en' }) {
     <div className="space-y-6">
       <div>
         <p className="text-sm font-semibold uppercase tracking-[0.2em] text-brand-gold">{t.overview}</p>
-        <h2 className="mt-2 font-serif text-3xl text-brand-navy">Airvoy Dashboard</h2>
+        <h2 className="mt-2 font-serif text-3xl text-brand-navy">{agencyName ? `${agencyName} Dashboard` : 'Dashboard'}</h2>
       </div>
 
       {error && (

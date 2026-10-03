@@ -6,6 +6,7 @@ export default function SecureDeleteModal({
   onClose,
   onConfirm,
   title,
+  description = 'This action is permanent and affects financial data. Enter admin PIN to proceed.',
   expectedPin = '1234',
 }) {
   const [pin, setPin] = useState('');
@@ -70,9 +71,7 @@ export default function SecureDeleteModal({
             <h3 className="mt-2 text-xl font-bold text-brand-navy dark:text-white">{title}</h3>
           </div>
 
-          <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">
-            This action is permanent and affects financial data. Enter admin PIN to proceed.
-          </p>
+          <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">{description}</p>
 
           <label className="block text-sm font-medium text-brand-navy dark:text-slate-200">
             <span className="mb-2 block">Admin PIN</span>
