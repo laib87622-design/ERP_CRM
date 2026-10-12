@@ -211,6 +211,8 @@ export default function AssignClientWorkflow({ onAssigned, onCancel }) {
           return {
             ...itemPayload,
             step_id: stepIdMap[item.step_id],
+            standard_note: item.standard_note || '',
+            estimated_price: Number(item.estimated_price || 0),
             is_done: false,
             drive_url: null,
           };

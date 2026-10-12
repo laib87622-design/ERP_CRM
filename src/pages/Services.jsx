@@ -123,6 +123,7 @@ export default function Services({ language = 'en' }) {
   const [matrixOptions, setMatrixOptions] = useState({ country_id: [], visa_type_id: [], professional_status: [] });
   const [editingTemplateName, setEditingTemplateName] = useState(false);
   const [draftTemplateName, setDraftTemplateName] = useState('');
+  const [itemEditor, setItemEditor] = useState(null);
   const [editingItemId, setEditingItemId] = useState(null);
   const [editingItemDraft, setEditingItemDraft] = useState('');
 
@@ -172,18 +173,41 @@ export default function Services({ language = 'en' }) {
 
     const { data, error: fetchError } = await supabase
       .from('client_services')
-      .select('id, client_id, template_id, stages_data, created_at, clients(full_name), service_templates(title, country_id, visa_type_id)')
+      .select('id, client_id, template_id, stages_data, created_at, clients(full_name), service_templates(title, country_id, visa_type_id, service_stages(id, service_steps(id, service_items(id, standard_note, estimated_price))))')
       .order('created_at', { ascending: false });
 
     if (fetchError) throw fetchError;
 
     setClientServices(
-      (data || []).map((row) => ({
-        ...row,
-        clientName: row.clients?.full_name || 'Unknown client',
-        templateName: row.service_templates?.title || 'Untitled service',
-        progress: computeStagesProgress(row.stages_data),
-      }))
+      (data || []).map((row) => {
+        const itemMetadata = new Map(
+          (row.service_templates?.service_stages || []).flatMap((stage) => (
+            (stage.service_steps || []).flatMap((step) => step.service_items || [])
+          )).map((item) => [item.id, item])
+        );
+        const stagesData = (row.stages_data || []).map((stage) => ({
+          ...stage,
+          steps: (stage.steps || []).map((step) => ({
+            ...step,
+            items: (step.items || []).map((item) => {
+              const metadata = itemMetadata.get(item.id);
+              return {
+                ...item,
+                standard_note: metadata?.standard_note ?? item.standard_note ?? '',
+                estimated_price: Number(metadata?.estimated_price ?? item.estimated_price ?? 0),
+              };
+            }),
+          })),
+        }));
+
+        return {
+          ...row,
+          stages_data: stagesData,
+          clientName: row.clients?.full_name || 'Unknown client',
+          templateName: row.service_templates?.title || 'Untitled service',
+          progress: computeStagesProgress(stagesData),
+        };
+      })
     );
   };
 
@@ -401,6 +425,8 @@ export default function Services({ language = 'en' }) {
         return {
           ...itemPayload,
           step_id: stepIdMap[item.step_id],
+          standard_note: item.standard_note || '',
+          estimated_price: Number(item.estimated_price || 0),
           is_done: false,
           drive_url: null,
         };
@@ -589,27 +615,38 @@ export default function Services({ language = 'en' }) {
       setLoading(true);
       setError('');
 
-      const [stagesRes, stepsRes, itemsRes] = await Promise.all([
-        supabase
-          .from('service_stages')
-          .select('id, service_template_id, title, sort_order')
-          .eq('service_template_id', templateId)
-          .order('sort_order', { ascending: true }),
-        supabase.from('service_steps').select('id, stage_id, title, sort_order').order('sort_order', { ascending: true }),
-        supabase.from('service_items').select('id, step_id, title, sort_order').order('sort_order', { ascending: true }),
-      ]);
+      const { data, error: templateError } = await supabase
+        .from('service_templates')
+        .select(`
+          *,
+          service_stages (
+            *,
+            service_steps (
+              *,
+              service_items (*)
+            )
+          )
+        `)
+        .eq('id', templateId)
+        .single();
 
-      if (stagesRes.error) throw stagesRes.error;
-      if (stepsRes.error) throw stepsRes.error;
-      if (itemsRes.error) throw itemsRes.error;
+      if (templateError) throw templateError;
 
-      const stages = (stagesRes.data || []).map((stage) => ({
+      const stages = (data?.service_stages || [])
+        .sort((left, right) => Number(left.sort_order || 0) - Number(right.sort_order || 0))
+        .map((stage) => ({
         ...stage,
-        steps: (stepsRes.data || [])
-          .filter((step) => step.stage_id === stage.id)
+        steps: (stage.service_steps || [])
+          .sort((left, right) => Number(left.sort_order || 0) - Number(right.sort_order || 0))
           .map((step) => ({
             ...step,
-            items: (itemsRes.data || []).filter((item) => item.step_id === step.id),
+            items: (step.service_items || [])
+              .sort((left, right) => Number(left.sort_order || 0) - Number(right.sort_order || 0))
+              .map((item) => ({
+                ...item,
+                standard_note: item.standard_note || '',
+                estimated_price: Number(item.estimated_price || 0),
+              })),
           })),
       }));
 
@@ -627,60 +664,105 @@ export default function Services({ language = 'en' }) {
   }, [selectedTemplateId, mode]);
 
   const handleSaveTemplate = async () => {
-    if (!supabase || !selectedTemplateId || !selectedTemplate) return;
-
-    const title = String(editingTemplateName ? draftTemplateName : selectedTemplate.title || '').trim();
-    if (!title) {
-      setError('Template name is required.');
-      return;
-    }
-
-    const matrixPayload = sanitizeTemplateMatrixPayload({
-      ...templateMatrix,
-      client_id: null,
-      supplier_id: null,
-      package_id: null,
-    });
-
-    if (!matrixPayload.country_id || !matrixPayload.visa_type_id || !matrixPayload.professional_status) {
-      setError('Country, visa type, and professional status are required before saving the template.');
-      return;
-    }
+    setIsSaving(true);
+    setSaveMessage('');
+    setError('');
 
     try {
-      setIsSaving(true);
-      setSaveMessage('');
-      setError('');
+      if (!supabase) throw new Error('Supabase is not configured.');
+      if (!selectedTemplateId || !selectedTemplate) throw new Error('Select a template before saving.');
+
+      const title = String(editingTemplateName ? draftTemplateName : selectedTemplate.title || '').trim();
+      if (!title) throw new Error('Template name is required.');
+
+      const matrixPayload = sanitizeTemplateMatrixPayload({
+        ...templateMatrix,
+        client_id: null,
+        supplier_id: null,
+        package_id: null,
+      });
+
+      if (!matrixPayload.country_id || !matrixPayload.visa_type_id || !matrixPayload.professional_status) {
+        throw new Error('Country, visa type, and professional status are required before saving the template.');
+      }
+
+      const { error: deleteStagesError } = await supabase
+        .from('service_stages')
+        .delete()
+        .eq('service_template_id', selectedTemplateId);
+      if (deleteStagesError) throw new Error(`Unable to replace template stages: ${deleteStagesError.message}`);
+
+      const persistedStages = [];
+      const sortedStages = [...workflow].sort((left, right) => Number(left.sort_order || 0) - Number(right.sort_order || 0));
+      for (const [stageIndex, stage] of sortedStages.entries()) {
+        const { data: insertedStage, error: stageInsertError } = await supabase
+          .from('service_stages')
+          .insert([{ service_template_id: selectedTemplateId, title: stage.title, sort_order: stageIndex }])
+          .select('id')
+          .single();
+        if (stageInsertError) throw new Error(`Unable to save stage "${stage.title}": ${stageInsertError.message}`);
+
+        const persistedStage = {
+          ...stage,
+          id: insertedStage.id,
+          service_template_id: selectedTemplateId,
+          sort_order: stageIndex,
+          steps: [],
+        };
+        const sortedSteps = [...(stage.steps || [])]
+          .sort((left, right) => Number(left.sort_order || 0) - Number(right.sort_order || 0));
+        for (const [stepIndex, step] of sortedSteps.entries()) {
+          const { data: insertedStep, error: stepInsertError } = await supabase
+            .from('service_steps')
+            .insert([{ stage_id: insertedStage.id, title: step.title, sort_order: stepIndex }])
+            .select('id')
+            .single();
+          if (stepInsertError) throw new Error(`Unable to save step "${step.title}": ${stepInsertError.message}`);
+
+          const persistedStep = {
+            ...step,
+            id: insertedStep.id,
+            stage_id: insertedStage.id,
+            sort_order: stepIndex,
+            items: [],
+          };
+          const sortedItems = [...(step.items || [])]
+            .sort((left, right) => Number(left.sort_order || 0) - Number(right.sort_order || 0));
+          for (const [itemIndex, item] of sortedItems.entries()) {
+            const itemPayload = {
+              step_id: insertedStep.id,
+              title: item.title,
+              standard_note: item.standard_note || '',
+              estimated_price: Number(item.estimated_price || 0),
+              drive_url: item.drive_url || null,
+              is_done: Boolean(item.is_done),
+              sort_order: itemIndex,
+            };
+            const { data: insertedItem, error: itemInsertError } = await supabase
+              .from('service_items')
+              .insert([itemPayload])
+              .select('*')
+              .single();
+            if (itemInsertError) throw new Error(`Unable to save item "${item.title}": ${itemInsertError.message}`);
+            persistedStep.items.push(insertedItem);
+          }
+
+          persistedStage.steps.push(persistedStep);
+        }
+        persistedStages.push(persistedStage);
+      }
 
       const { error: templateError } = await supabase
         .from('service_templates')
         .update({ ...matrixPayload, title })
-        .eq('id', selectedTemplateId);
+        .eq('id', selectedTemplateId)
+        .select('id')
+        .single();
 
-      if (templateError) throw templateError;
-
-      const childUpdates = [
-        ...workflow.map((stage, stageIndex) =>
-          supabase.from('service_stages')
-            .update({ title: stage.title, sort_order: stageIndex })
-            .eq('id', stage.id)
-        ),
-        ...workflow.flatMap((stage) => (stage.steps || []).flatMap((step, stepIndex) => [
-          supabase.from('service_steps')
-            .update({ title: step.title, sort_order: stepIndex })
-            .eq('id', step.id),
-          ...(step.items || []).map((item, itemIndex) =>
-            supabase.from('service_items')
-              .update({ title: item.title, sort_order: itemIndex })
-              .eq('id', item.id)
-          ),
-        ])),
-      ];
-      const childResults = await Promise.all(childUpdates);
-      const childError = childResults.find((result) => result.error)?.error;
-      if (childError) throw childError;
+      if (templateError) throw new Error(`service_templates update failed: ${templateError.message}`);
 
       const updatedTemplate = { ...selectedTemplate, ...matrixPayload, title };
+      setWorkflow(persistedStages);
       setTemplates((previous) => previous.map((template) => (
         template.id === selectedTemplateId ? updatedTemplate : template
       )));
@@ -690,7 +772,10 @@ export default function Services({ language = 'en' }) {
       setSaveMessage('Saved successfully!');
       window.setTimeout(() => setSaveMessage(''), 3000);
     } catch (err) {
-      setError(err.message || 'Unable to save template.');
+      const message = err?.message || 'Unable to save template.';
+      console.error('Database save error:', err);
+      setError(message);
+      window.alert(`Failed to save template: ${message}`);
     } finally {
       setIsSaving(false);
     }
@@ -1137,37 +1222,89 @@ export default function Services({ language = 'en' }) {
     }
   };
 
-  const addItem = async (stageId, stepId) => {
-    if (!supabase) return;
+  const openItemEditor = (stageId, stepId, item = null) => {
+    setItemEditor({
+      stageId,
+      stepId,
+      itemId: item?.id || null,
+      title: item?.title || '',
+      standard_note: item?.standard_note || '',
+      estimated_price: item?.estimated_price ?? 0,
+    });
+  };
+
+  const handleSaveWorkflowItem = async (event) => {
+    event.preventDefault();
+    if (!supabase || !itemEditor) return;
+
+    const title = itemEditor.title.trim();
+    const estimatedPrice = Number(itemEditor.estimated_price || 0);
+    if (!title) {
+      setError('Item title is required.');
+      return;
+    }
+    if (!Number.isFinite(estimatedPrice) || estimatedPrice < 0) {
+      setError('Estimated price must be a valid non-negative amount.');
+      return;
+    }
+
+    const itemPayload = {
+      title,
+      standard_note: itemEditor.standard_note.trim(),
+      estimated_price: estimatedPrice,
+    };
 
     try {
       setSaving(true);
-      const stage = workflow.find((item) => item.id === stageId);
-      const step = stage?.steps.find((entry) => entry.id === stepId);
-      const nextSortOrder = (step?.items || []).length;
+      setError('');
 
-      const { data, error: insertError } = await supabase
-        .from('service_items')
-        .insert([{ step_id: stepId, title: 'New Item', is_done: false, sort_order: nextSortOrder }])
-        .select('id, step_id, title, sort_order')
-        .single();
+      let savedItem;
+      if (itemEditor.itemId) {
+        const { data, error: updateError } = await supabase
+          .from('service_items')
+          .update(itemPayload)
+          .eq('id', itemEditor.itemId)
+          .select('*')
+          .single();
+        if (updateError) throw updateError;
+        savedItem = data;
+      } else {
+        const stage = workflow.find((entry) => entry.id === itemEditor.stageId);
+        const step = stage?.steps?.find((entry) => entry.id === itemEditor.stepId);
+        const { data, error: insertError } = await supabase
+          .from('service_items')
+          .insert([{
+            ...itemPayload,
+            step_id: itemEditor.stepId,
+            is_done: false,
+            sort_order: (step?.items || []).length,
+          }])
+          .select('*')
+          .single();
+        if (insertError) throw insertError;
+        savedItem = data;
+      }
 
-      if (insertError) throw insertError;
-
-      setWorkflow((prev) =>
-        prev.map((stageItem) =>
-          stageItem.id === stageId
-            ? {
-                ...stageItem,
-                steps: stageItem.steps.map((stepItem) =>
-                  stepItem.id === stepId ? { ...stepItem, items: [...(stepItem.items || []), data] } : stepItem
-                ),
-              }
-            : stageItem
-        )
-      );
+      setWorkflow((previous) => previous.map((stage) => (
+        stage.id === itemEditor.stageId
+          ? {
+              ...stage,
+              steps: stage.steps.map((step) => (
+                step.id === itemEditor.stepId
+                  ? {
+                      ...step,
+                      items: itemEditor.itemId
+                        ? step.items.map((item) => (item.id === itemEditor.itemId ? savedItem : item))
+                        : [...(step.items || []), savedItem],
+                    }
+                  : step
+              )),
+            }
+          : stage
+      )));
+      setItemEditor(null);
     } catch (err) {
-      setError(err.message || 'Unable to add item.');
+      setError(err.message || 'Unable to save workflow item.');
     } finally {
       setSaving(false);
     }
@@ -1200,37 +1337,6 @@ export default function Services({ language = 'en' }) {
       setError(err.message || 'Unable to reorder item.');
     } finally {
       setSaving(false);
-    }
-  };
-
-  const updateItemTitle = async (stageId, stepId, itemId, title) => {
-    const trimmed = title.trim();
-    if (!trimmed) {
-      setError('Item title is required.');
-      return;
-    }
-
-    try {
-      const { error: updateError } = await supabase.from('service_items').update({ title: trimmed }).eq('id', itemId);
-      if (updateError) throw updateError;
-
-      setWorkflow((prev) =>
-        prev.map((stage) =>
-          stage.id === stageId
-            ? {
-                ...stage,
-                steps: stage.steps.map((step) =>
-                  step.id === stepId
-                    ? { ...step, items: step.items.map((item) => (item.id === itemId ? { ...item, title: trimmed } : item)) }
-                    : step
-                ),
-              }
-            : stage
-        )
-      );
-      setEditingItemId(null);
-    } catch (err) {
-      setError(err.message || 'Unable to update item.');
     }
   };
 
@@ -1947,7 +2053,7 @@ export default function Services({ language = 'en' }) {
                               </div>
 
                               <div className="flex items-center gap-2">
-                                <button type="button" onClick={() => addItem(stage.id, step.id)} className="inline-flex items-center gap-2 rounded-lg bg-brand-gold px-3 py-2 text-xs font-bold text-brand-navy">
+                                <button type="button" onClick={() => openItemEditor(stage.id, step.id)} className="inline-flex items-center gap-2 rounded-lg bg-brand-gold px-3 py-2 text-xs font-bold text-brand-navy">
                                   <Plus size={14} />
                                   Add Item
                                 </button>
@@ -1977,39 +2083,25 @@ export default function Services({ language = 'en' }) {
 
                             <div className="mt-3 space-y-2">
                               {(step.items || []).map((item, itemIndex) => {
-                                const isItemEditing = editingItemId === item.id;
                                 return (
-                                  <div key={item.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
-                                    {isItemEditing ? (
-                                      <div className="flex flex-1 items-center gap-2">
-                                        <input
-                                          value={editingItemDraft}
-                                          onChange={(event) => setEditingItemDraft(event.target.value)}
-                                          className="flex-1 rounded-lg border border-slate-200 bg-brand-surface px-3 py-2 text-sm text-brand-navy outline-none focus:border-brand-gold"
-                                        />
-                                        <button
-                                          type="button"
-                                          onClick={() => updateItemTitle(stage.id, step.id, item.id, editingItemDraft)}
-                                          className="rounded-lg bg-brand-gold px-3 py-2 text-xs font-bold text-brand-navy"
-                                        >
-                                          Save
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => setEditingItemId(null)}
-                                          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600"
-                                        >
-                                          Cancel
-                                        </button>
-                                      </div>
-                                    ) : (
-                                      <div className="flex min-w-0 flex-1 items-center gap-2">
+                                  <div key={item.id} className="flex items-start justify-between gap-2 rounded-xl border border-slate-200 bg-white p-3">
+                                      <div className="flex min-w-0 flex-1 items-start gap-2">
                                         <ListChecks size={14} className="shrink-0 text-brand-gold" />
-                                        <span className="truncate text-sm text-slate-700">{item.title}</span>
+                                        <div className="min-w-0 flex-1">
+                                          <div className="flex flex-wrap items-center gap-2">
+                                            <span className="whitespace-normal break-words text-sm font-semibold text-slate-800">{item.title}</span>
+                                            {Number(item.estimated_price || 0) > 0 && (
+                                              <span className="whitespace-nowrap rounded bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-800">
+                                                {Number(item.estimated_price).toLocaleString()} DA
+                                              </span>
+                                            )}
+                                          </div>
+                                          {item.standard_note && (
+                                            <p className="mt-1 whitespace-normal break-words border-l-2 border-slate-200 pl-2 text-xs italic text-slate-500">{item.standard_note}</p>
+                                          )}
+                                        </div>
                                       </div>
-                                    )}
 
-                                    {!isItemEditing && (
                                       <div className="flex items-center gap-2">
                                         <button
                                           type="button"
@@ -2031,11 +2123,9 @@ export default function Services({ language = 'en' }) {
                                         </button>
                                         <button
                                           type="button"
-                                          onClick={() => {
-                                            setEditingItemId(item.id);
-                                            setEditingItemDraft(item.title);
-                                          }}
+                                          onClick={() => openItemEditor(stage.id, step.id, item)}
                                           className="rounded-lg border border-slate-200 bg-white p-2 text-brand-navy"
+                                          aria-label={`Edit ${item.title}`}
                                         >
                                           <Pencil size={14} />
                                         </button>
@@ -2047,7 +2137,6 @@ export default function Services({ language = 'en' }) {
                                           <Trash2 size={14} />
                                         </button>
                                       </div>
-                                    )}
                                   </div>
                                 );
                               })}
@@ -2062,6 +2151,69 @@ export default function Services({ language = 'en' }) {
             </div>
           )}
         </>
+      )}
+
+      {itemEditor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <form onSubmit={handleSaveWorkflowItem} className="w-full max-w-lg space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+            <div>
+              <h3 className="text-lg font-bold text-brand-navy">{itemEditor.itemId ? 'Edit Workflow Item' : 'Add Workflow Item'}</h3>
+              <p className="mt-1 text-sm text-slate-500">Set the checklist item, agent instructions, and baseline cost.</p>
+            </div>
+
+            <label className="block text-sm font-medium text-slate-700">
+              Item title
+              <input
+                autoFocus
+                required
+                value={itemEditor.title}
+                onChange={(event) => setItemEditor((previous) => ({ ...previous, title: event.target.value }))}
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-brand-navy outline-none focus:border-brand-gold"
+              />
+            </label>
+
+            <label className="block text-sm font-medium text-slate-700">
+              Standard note for agent
+              <textarea
+                rows={3}
+                value={itemEditor.standard_note}
+                onChange={(event) => setItemEditor((previous) => ({ ...previous, standard_note: event.target.value }))}
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-brand-navy outline-none focus:border-brand-gold"
+                placeholder="Instructions shown to the assigned agent"
+              />
+            </label>
+
+            <label className="block text-sm font-medium text-slate-700">
+              Estimated price (DA)
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={itemEditor.estimated_price}
+                onChange={(event) => setItemEditor((previous) => ({ ...previous, estimated_price: event.target.value }))}
+                className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-brand-navy outline-none focus:border-brand-gold"
+              />
+            </label>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setItemEditor(null)}
+                disabled={saving}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={saving}
+                className="rounded-lg bg-brand-gold px-4 py-2 text-sm font-bold text-brand-navy disabled:cursor-wait disabled:opacity-50"
+              >
+                {saving ? 'Saving...' : 'Save Item'}
+              </button>
+            </div>
+          </form>
+        </div>
       )}
 
       {isAssignModalOpen && (
@@ -2217,12 +2369,12 @@ function ClientServiceDetail({ row, onBack, onSave, isSaving, saveMessage, onTog
         ) : (
           stagesData.map((stage) => (
             <div key={stage.id} className="rounded-2xl border border-slate-200 bg-brand-card p-4 shadow-sm">
-              <h4 className="text-lg font-semibold text-brand-navy">{stage.title}</h4>
+              <h4 className="h-auto whitespace-normal break-words [overflow-wrap:anywhere] text-lg font-semibold text-brand-navy">{stage.title}</h4>
 
-              <div className="mt-3 space-y-3">
+              <div className="mt-3 min-h-0 space-y-3">
                 {(stage.steps || []).map((step) => (
                   <div key={step.id} className="rounded-xl border border-slate-200 bg-brand-surface p-3">
-                    <p className="mb-2 font-medium text-brand-navy">{step.title}</p>
+                    <p className="mb-2 h-auto whitespace-normal break-words [overflow-wrap:anywhere] font-medium text-brand-navy">{step.title}</p>
 
                     <div className="space-y-2">
                       {(step.items || []).map((item) => {
@@ -2243,9 +2395,19 @@ function ClientServiceDetail({ row, onBack, onSave, isSaving, saveMessage, onTog
                                 <Check size={12} />
                               </button>
 
-                              <span className={`truncate text-sm ${itemDone ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
-                                {item.title}
-                              </span>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className={`whitespace-normal break-words text-sm ${itemDone ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
+                                    {item.title}
+                                  </span>
+                                  {Number(item.estimated_price || 0) > 0 && (
+                                    <span className="whitespace-nowrap rounded bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-800">
+                                      {Number(item.estimated_price).toLocaleString()} DA
+                                    </span>
+                                  )}
+                                </div>
+                                {item.standard_note && <p className="mt-1 whitespace-normal break-words text-xs italic text-slate-500">{item.standard_note}</p>}
+                              </div>
 
                               <input
                                 type="text"

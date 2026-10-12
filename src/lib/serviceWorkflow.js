@@ -11,7 +11,7 @@ export const buildStagesDataFromTemplate = async (templateId) => {
       .eq('service_template_id', templateId)
       .order('sort_order', { ascending: true }),
     supabase.from('service_steps').select('id, stage_id, title, sort_order').order('sort_order', { ascending: true }),
-    supabase.from('service_items').select('id, step_id, title, sort_order').order('sort_order', { ascending: true }),
+    supabase.from('service_items').select('id, step_id, title, standard_note, estimated_price, sort_order').order('sort_order', { ascending: true }),
   ]);
 
   if (stagesRes.error) throw stagesRes.error;
@@ -33,6 +33,8 @@ export const buildStagesDataFromTemplate = async (templateId) => {
           .map((item) => ({
             id: item.id,
             title: item.title,
+            standard_note: item.standard_note || '',
+            estimated_price: Number(item.estimated_price || 0),
             is_done: false,
             drive_url: null,
             sort_order: item.sort_order,

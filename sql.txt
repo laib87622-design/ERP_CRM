@@ -244,6 +244,8 @@ CREATE TABLE service_items (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     step_id UUID REFERENCES service_steps(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
+    standard_note TEXT NOT NULL DEFAULT '',
+    estimated_price NUMERIC(12, 2) NOT NULL DEFAULT 0,
     drive_url TEXT,
     is_done BOOLEAN DEFAULT false,
     sort_order INTEGER DEFAULT 0,
