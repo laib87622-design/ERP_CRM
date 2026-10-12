@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FileText, Printer, Download } from 'lucide-react';
+import { FileText, Printer, Download, Eye } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/currency';
 import { openInvoicePdf } from '../lib/invoicePdf';
@@ -187,6 +187,10 @@ export default function Invoices({ language = 'en' }) {
 
   const t = translations[language] || translations.en;
   const [invoices, setInvoices] = useState([]);
+  const [filterClient, setFilterClient] = useState('');
+  const [filterStatus, setFilterStatus] = useState('ALL');
+  const [expandedInvoiceId, setExpandedInvoiceId] = useState(null);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [paymentHistory, setPaymentHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -199,6 +203,9 @@ export default function Invoices({ language = 'en' }) {
   const [invoicePayerOptions, setInvoicePayerOptions] = useState({});
   const [selectedInvoicePayers, setSelectedInvoicePayers] = useState({});
   const navigate = useNavigate();
+  const toggleExpand = (id) => {
+    setExpandedInvoiceId((prev) => (prev === id ? null : id));
+  };
 
   const createCommissionEntriesForInvoice = async (invoice, totalPaid = 0) => {
     if (!supabase || !invoice?.booking_id) return;
@@ -410,6 +417,7 @@ export default function Invoices({ language = 'en' }) {
     }
 
     try {
+      setIsProcessing(true);
       setProcessingInvoiceId(invoice.id);
       setError('');
 
@@ -461,6 +469,7 @@ export default function Invoices({ language = 'en' }) {
       setError(err.message || 'Unable to process invoice payment.');
     } finally {
       setProcessingInvoiceId(null);
+      setIsProcessing(false);
     }
   };
 
@@ -572,6 +581,13 @@ export default function Invoices({ language = 'en' }) {
     fetchInvoices();
   }, []);
 
+  const filteredInvoices = invoices.filter((invoice) => {
+    const matchesClient = (invoice.client_name || '').toLowerCase().includes(filterClient.toLowerCase()) ||
+      (invoice.invoice_number || '').toString().includes(filterClient);
+    const matchesStatus = filterStatus === 'ALL' || String(invoice.status || '').toUpperCase() === filterStatus;
+    return matchesClient && matchesStatus;
+  });
+
   return (
     <div className="space-y-6">
       <div>
@@ -584,6 +600,30 @@ export default function Invoices({ language = 'en' }) {
           {error}
         </div>
       )}
+
+      <div className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:flex-row">
+        <div className="flex-1">
+          <input
+            type="text"
+            placeholder="Search by Client Name or Invoice #..."
+            value={filterClient}
+            onChange={(event) => setFilterClient(event.target.value)}
+            className="w-full rounded-lg border border-slate-200 px-4 py-2 text-sm focus:border-amber-500 focus:ring-amber-500"
+          />
+        </div>
+        <div className="w-full md:w-64">
+          <select
+            value={filterStatus}
+            onChange={(event) => setFilterStatus(event.target.value)}
+            className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm focus:border-amber-500 focus:ring-amber-500"
+          >
+            <option value="ALL">All Statuses</option>
+            <option value="PENDING">Pending</option>
+            <option value="PARTIAL">Partial</option>
+            <option value="PAID">Paid</option>
+          </select>
+        </div>
+      </div>
 
       <div className="rounded-2xl border border-slate-200 bg-brand-card shadow-sm">
         <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
@@ -626,221 +666,233 @@ export default function Invoices({ language = 'en' }) {
           <table className="w-full table-fixed border-collapse text-left">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50">
-                <th className="w-[8%] px-4 py-3 text-xs font-bold uppercase tracking-wider text-slate-500">{t.invoiceNumber}</th>
-                <th className="w-[15%] px-4 py-3 text-xs font-bold uppercase tracking-wider text-slate-500">{t.client}</th>
-                <th className="w-[12%] px-4 py-3 text-xs font-bold uppercase tracking-wider text-slate-500">{t.clientRef}</th>
-                <th className="w-[15%] px-4 py-3 text-xs font-bold uppercase tracking-wider text-slate-500">{t.reference}</th>
-                <th className="w-[10%] px-4 py-3 text-xs font-bold uppercase tracking-wider text-slate-500">{t.subtotal}</th>
-                <th className="w-[15%] px-4 py-3 text-xs font-bold uppercase tracking-wider text-slate-500">{t.total}</th>
-                <th className="w-[10%] px-4 py-3 text-xs font-bold uppercase tracking-wider text-slate-500">{t.status}</th>
-                <th className="w-[15%] px-4 py-3 text-right text-xs font-bold uppercase tracking-wider text-slate-500">{t.actions}</th>
+                <th className="w-[16%] px-4 py-3 text-xs font-bold uppercase tracking-wider text-slate-500">{t.invoiceNumber}</th>
+                <th className="w-[24%] px-4 py-3 text-xs font-bold uppercase tracking-wider text-slate-500">{t.client}</th>
+                <th className="w-[20%] px-4 py-3 text-xs font-bold uppercase tracking-wider text-slate-500">{t.reference}</th>
+                <th className="w-[16%] px-4 py-3 text-xs font-bold uppercase tracking-wider text-slate-500">{t.total}</th>
+                <th className="w-[12%] px-4 py-3 text-xs font-bold uppercase tracking-wider text-slate-500">{t.status}</th>
+                <th className="w-[12%] px-4 py-3 text-right text-xs font-bold uppercase tracking-wider text-slate-500">{t.actions}</th>
               </tr>
             </thead>
 
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan="8" className="px-4 py-10 text-center text-sm text-slate-500 align-top">
+                  <td colSpan="6" className="px-4 py-10 text-center text-sm text-slate-500 align-top">
                     {t.loading}
                   </td>
                 </tr>
-              ) : invoices.length === 0 ? (
+              ) : filteredInvoices.length === 0 ? (
                 <tr>
-                  <td colSpan="8" className="px-4 py-10 text-center text-sm text-slate-500 align-top">
+                  <td colSpan="6" className="px-4 py-10 text-center text-sm text-slate-500 align-top">
                     {t.empty}
                   </td>
                 </tr>
               ) : (
-                invoices.map((invoice) => {
+                filteredInvoices.map((invoice) => {
                   const normalizedStatus = (invoice.status || 'pending').toLowerCase();
                   const statusClass = statusStyles[normalizedStatus] || statusStyles.pending;
                   const selectedPaymentType = invoicePaymentTypes[invoice.id] || getInvoicePaymentType(invoice);
                   const partialAmount = Number(invoicePartialAmounts[invoice.id] ?? invoice.amount_paid ?? 0);
                   const paymentMeta = getInvoicePaymentMeta(invoice, selectedPaymentType, partialAmount);
-                  const subtotal = Number(invoice.subtotal) || 0;
-
                   return (
-                    <tr
-                      key={invoice.id}
-                      className="cursor-pointer border-t border-slate-200 transition hover:bg-slate-50"
-                      onClick={() => navigate(`/invoices/${invoice.id}`)}
-                    >
-                      <td className="px-4 py-4 align-top text-sm font-medium text-brand-navy">
-                        #{invoice.invoice_number}
-                      </td>
-                      <td className="px-4 py-4 align-top text-sm text-brand-navy">
-                        {invoice.client_name || 'Client'}
-                      </td>
-                      <td className="px-4 py-4 align-top text-sm font-mono text-slate-600">
-                        {invoice.client_reference || '—'}
-                      </td>
-                      <td className="px-4 py-4 align-top text-sm font-mono text-brand-navy">
-                        {invoice.reference || '—'}
-                      </td>
-                      <td className="px-4 py-4 align-top text-sm font-mono text-brand-navy">
-                        {formatCurrency(subtotal)}
-                      </td>
-                      <td className="px-4 py-4 align-top text-sm">
-                        <div className="font-mono font-semibold text-brand-navy">
-                          {formatCurrency(Number(invoice.grand_total) || 0)}
-                        </div>
-                      </td>
-                      <td className="px-4 py-4 align-top text-sm">
-                        <span
-                          className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${statusClass}`}
-                        >
-                          {normalizedStatus}
-                        </span>
-                      </td>
-                      <td className="px-4 py-4 align-top text-sm" onClick={(event) => event.stopPropagation()}>
-                        <div className="flex flex-col items-end gap-2">
-                          <select
-                            value={selectedPaymentType}
-                            onChange={(event) => {
-                              const nextType = event.target.value;
-                              setInvoicePaymentTypes((prev) => ({ ...prev, [invoice.id]: nextType }));
-                              if (nextType === 'full') {
-                                setInvoicePartialAmounts((prev) => ({ ...prev, [invoice.id]: Number(invoice.grand_total || 0) }));
-                              }
-                            }}
-                            className="w-full rounded-xl border border-slate-200 bg-brand-surface px-2.5 py-2 text-sm text-brand-navy outline-none focus:border-brand-gold"
-                            disabled={normalizedStatus === 'paid'}
-                          >
-                            <option value="full">Full Payment</option>
-                            <option value="partial">Partial Payment</option>
-                          </select>
-
-                          <select
-                            value={invoicePaymentMethods[invoice.id] || normalizePaymentMethodValue(invoice.payment_method || 'cash')}
-                            onChange={(event) => {
-                              const nextMethod = normalizePaymentMethodValue(event.target.value);
-                              setInvoicePaymentMethods((prev) => ({ ...prev, [invoice.id]: nextMethod }));
-                            }}
-                            className="w-full rounded-xl border border-slate-200 bg-brand-surface px-2.5 py-2 text-sm text-brand-navy outline-none focus:border-brand-gold"
-                            disabled={normalizedStatus === 'paid'}
-                          >
-                            {getPaymentMethodsForAccount(
-                              (financialAccounts || []).find((account) => account.id === (selectedInvoiceAccountIds[invoice.id] || invoice.account_id)) || null
-                            ).map((method) => (
-                              <option key={method} value={method}>{getPaymentMethodLabel(method)}</option>
-                            ))}
-                          </select>
-
-                          {selectedPaymentType === 'partial' && (
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              value={partialAmount || ''}
-                              onChange={(event) => {
-                                const nextValue = Number(event.target.value || 0);
-                                setInvoicePartialAmounts((prev) => ({ ...prev, [invoice.id]: nextValue }));
-                              }}
-                              className="w-full rounded-xl border border-slate-200 bg-brand-surface px-2.5 py-2 text-sm text-brand-navy outline-none focus:border-brand-gold"
-                              placeholder="Amount paid"
-                            />
-                          )}
-
-                          <select
-                            value={selectedInvoicePayers[invoice.id] || invoice.client_id || ''}
-                            onChange={(event) => {
-                              const nextPayerId = event.target.value;
-                              setSelectedInvoicePayers((prev) => ({ ...prev, [invoice.id]: nextPayerId }));
-                            }}
-                            className="w-full rounded-xl border border-slate-200 bg-brand-surface px-2.5 py-2 text-sm text-brand-navy outline-none focus:border-brand-gold"
-                            disabled={normalizedStatus === 'paid'}
-                          >
-                            <option value="">Select payer</option>
-                            {(invoicePayerOptions[invoice.id] || []).map((payer) => (
-                              <option key={payer.id} value={payer.id}>{payer.label}</option>
-                            ))}
-                          </select>
-
-                          <select
-                            value={selectedInvoiceAccountIds[invoice.id] || invoice.account_id || ''}
-                            onChange={async (event) => {
-                              const nextAccountId = event.target.value;
-                              setSelectedInvoiceAccountIds((prev) => ({ ...prev, [invoice.id]: nextAccountId }));
-
-                              const nextAccount = (financialAccounts || []).find((account) => account.id === nextAccountId) || null;
-                              const allowedMethods = getPaymentMethodsForAccount(nextAccount);
-                              const currentMethod = invoicePaymentMethods[invoice.id] || normalizePaymentMethodValue(invoice.payment_method || 'cash');
-                              const nextMethod = allowedMethods.includes(currentMethod) ? currentMethod : allowedMethods[0] || 'cash';
-                              setInvoicePaymentMethods((prev) => ({ ...prev, [invoice.id]: nextMethod }));
-
-                              if (!supabase || !invoice.id) return;
-
-                              try {
-                                await supabase.from('invoices').update({ account_id: nextAccountId || null, payment_method: nextMethod }).eq('id', invoice.id);
-                              } catch (saveError) {
-                                console.warn('Unable to save selected invoice account:', saveError);
-                              }
-                            }}
-                            className="w-full rounded-xl border border-slate-200 bg-brand-surface px-2.5 py-2 text-sm text-brand-navy outline-none focus:border-brand-gold"
-                            disabled={normalizedStatus === 'paid'}
-                          >
-                            <option value="">Select account</option>
-                            {(financialAccounts || []).map((account) => (
-                              <option key={account.id} value={account.id}>
-                                {account.label || account.bank_name || 'Account'}
-                              </option>
-                            ))}
-                          </select>
-
-                          <div className="flex w-full items-center justify-end gap-2 pt-1">
+                    <Fragment key={invoice.id}>
+                      <tr
+                        aria-expanded={expandedInvoiceId === invoice.id}
+                        className="cursor-pointer border-b transition-colors hover:bg-slate-50"
+                        onClick={() => toggleExpand(invoice.id)}
+                      >
+                        <td className="px-4 py-4 text-sm font-medium text-brand-navy">#{invoice.invoice_number}</td>
+                        <td className="px-4 py-4 text-sm text-brand-navy">{invoice.client_name || 'Client'}</td>
+                        <td className="px-4 py-4 text-sm text-slate-500">{invoice.reference || '—'}</td>
+                        <td className="px-4 py-4 text-sm font-bold text-brand-navy">{formatCurrency(Number(invoice.grand_total) || 0)}</td>
+                        <td className="px-4 py-4">
+                          <span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] ${statusClass}`}>
+                            {normalizedStatus}
+                          </span>
+                        </td>
+                        <td className="px-4 py-4">
+                          <div className="flex items-center justify-end gap-3">
                             <button
                               type="button"
                               onClick={(event) => {
                                 event.stopPropagation();
-                                openInvoicePdf(invoice, invoice.clients);
+                                navigate(`/invoices/${invoice.id}`);
                               }}
-                              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-brand-navy"
-                              title="Download invoice PDF"
+                              className="rounded-md p-1.5 text-slate-400 transition-colors hover:bg-amber-50 hover:text-amber-600"
+                              title="View Invoice Details"
+                              aria-label="View invoice details"
                             >
-                              <Printer size={14} />
+                              <Eye size={18} />
                             </button>
-
-                            {selectedPaymentType === 'partial' && (
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  handleInvoicePayment(invoice, { forceFull: false });
-                                }}
-                                disabled={processingInvoiceId === invoice.id}
-                                className="rounded-xl border border-brand-gold bg-white px-3 py-2 text-xs font-bold text-brand-navy disabled:cursor-not-allowed disabled:opacity-60"
-                              >
-                                {processingInvoiceId === invoice.id ? 'Processing...' : 'Save Partial'}
-                              </button>
-                            )}
-
-                            <button
-                              type="button"
-                              onClick={(event) => {
-                                event.stopPropagation();
-                                handleInvoicePayment(invoice, { forceFull: selectedPaymentType === 'partial' });
-                              }}
-                              disabled={normalizedStatus === 'paid' || processingInvoiceId === invoice.id}
-                              className="rounded-xl bg-brand-gold px-3 py-2 text-xs font-bold text-brand-navy disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              {processingInvoiceId === invoice.id
-                                ? 'Processing...'
-                                : normalizedStatus === 'paid'
-                                  ? 'Paid'
-                                  : selectedPaymentType === 'partial'
-                                    ? 'Mark Full'
-                                    : 'Mark Paid'}
-                            </button>
+                            <span className="pointer-events-none w-24 text-right text-sm text-slate-400">
+                              {expandedInvoiceId === invoice.id ? '▲ Close' : '▼ Pay / Edit'}
+                            </span>
                           </div>
+                        </td>
+                      </tr>
 
-                          {selectedPaymentType === 'partial' && (
-                            <div className="rounded-xl border border-red-200 bg-red-50 px-2.5 py-1.5 text-[11px] font-semibold text-red-700">
-                              Remaining: {formatCurrency(paymentMeta.remaining)}
+                      {expandedInvoiceId === invoice.id && (
+                        <tr className="border-b border-slate-200 bg-slate-50/80">
+                          <td colSpan="6" className="p-4 md:p-6">
+                            <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                              <h4 className="mb-4 border-b pb-2 text-sm font-bold text-slate-700">Process Payment</h4>
+                              <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+                                <label className="space-y-1 text-xs font-semibold text-slate-600">
+                                  Payment Type
+                                  <select
+                                    value={selectedPaymentType}
+                                    onChange={(event) => {
+                                      const nextType = event.target.value;
+                                      setInvoicePaymentTypes((prev) => ({ ...prev, [invoice.id]: nextType }));
+                                      if (nextType === 'full') {
+                                        setInvoicePartialAmounts((prev) => ({ ...prev, [invoice.id]: Number(invoice.grand_total || 0) }));
+                                      }
+                                    }}
+                                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-brand-navy outline-none focus:border-brand-gold"
+                                    disabled={normalizedStatus === 'paid' || isProcessing}
+                                  >
+                                    <option value="full">Full Payment</option>
+                                    <option value="partial">Partial Payment</option>
+                                  </select>
+                                </label>
+
+                                <label className="space-y-1 text-xs font-semibold text-slate-600">
+                                  Method
+                                  <select
+                                    value={invoicePaymentMethods[invoice.id] || normalizePaymentMethodValue(invoice.payment_method || 'cash')}
+                                    onChange={(event) => {
+                                      const nextMethod = normalizePaymentMethodValue(event.target.value);
+                                      setInvoicePaymentMethods((prev) => ({ ...prev, [invoice.id]: nextMethod }));
+                                    }}
+                                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-brand-navy outline-none focus:border-brand-gold"
+                                    disabled={normalizedStatus === 'paid' || isProcessing}
+                                  >
+                                    {getPaymentMethodsForAccount(
+                                      (financialAccounts || []).find((account) => account.id === (selectedInvoiceAccountIds[invoice.id] || invoice.account_id)) || null
+                                    ).map((method) => (
+                                      <option key={method} value={method}>{getPaymentMethodLabel(method)}</option>
+                                    ))}
+                                  </select>
+                                </label>
+
+                                <label className="space-y-1 text-xs font-semibold text-slate-600">
+                                  Payer
+                                  <select
+                                    value={selectedInvoicePayers[invoice.id] || invoice.client_id || ''}
+                                    onChange={(event) => {
+                                      const nextPayerId = event.target.value;
+                                      setSelectedInvoicePayers((prev) => ({ ...prev, [invoice.id]: nextPayerId }));
+                                    }}
+                                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-brand-navy outline-none focus:border-brand-gold"
+                                    disabled={normalizedStatus === 'paid' || isProcessing}
+                                  >
+                                    <option value="">Select payer</option>
+                                    {(invoicePayerOptions[invoice.id] || []).map((payer) => (
+                                      <option key={payer.id} value={payer.id}>{payer.label}</option>
+                                    ))}
+                                  </select>
+                                </label>
+
+                                <label className="space-y-1 text-xs font-semibold text-slate-600">
+                                  Account
+                                  <select
+                                    value={selectedInvoiceAccountIds[invoice.id] || invoice.account_id || ''}
+                                    onChange={async (event) => {
+                                      const nextAccountId = event.target.value;
+                                      setSelectedInvoiceAccountIds((prev) => ({ ...prev, [invoice.id]: nextAccountId }));
+
+                                      const nextAccount = (financialAccounts || []).find((account) => account.id === nextAccountId) || null;
+                                      const allowedMethods = getPaymentMethodsForAccount(nextAccount);
+                                      const currentMethod = invoicePaymentMethods[invoice.id] || normalizePaymentMethodValue(invoice.payment_method || 'cash');
+                                      const nextMethod = allowedMethods.includes(currentMethod) ? currentMethod : allowedMethods[0] || 'cash';
+                                      setInvoicePaymentMethods((prev) => ({ ...prev, [invoice.id]: nextMethod }));
+
+                                      if (!supabase || !invoice.id) return;
+
+                                      try {
+                                        await supabase.from('invoices').update({ account_id: nextAccountId || null, payment_method: nextMethod }).eq('id', invoice.id);
+                                      } catch (saveError) {
+                                        console.warn('Unable to save selected invoice account:', saveError);
+                                      }
+                                    }}
+                                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-brand-navy outline-none focus:border-brand-gold"
+                                    disabled={normalizedStatus === 'paid' || isProcessing}
+                                  >
+                                    <option value="">Select account</option>
+                                    {(financialAccounts || []).map((account) => (
+                                      <option key={account.id} value={account.id}>
+                                        {account.label || account.bank_name || 'Account'}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+
+                                {selectedPaymentType === 'partial' && (
+                                  <label className="space-y-1 text-xs font-semibold text-slate-600">
+                                    Amount Paid
+                                    <input
+                                      type="number"
+                                      min="0"
+                                      step="0.01"
+                                      value={partialAmount || ''}
+                                      onChange={(event) => {
+                                        const nextValue = Number(event.target.value || 0);
+                                        setInvoicePartialAmounts((prev) => ({ ...prev, [invoice.id]: nextValue }));
+                                      }}
+                                      className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-brand-navy outline-none focus:border-brand-gold"
+                                      placeholder="Amount paid"
+                                      disabled={normalizedStatus === 'paid' || isProcessing}
+                                    />
+                                    <span className="block text-[11px] font-normal text-slate-500">
+                                      Remaining: {formatCurrency(paymentMeta.remaining)}
+                                    </span>
+                                  </label>
+                                )}
+                              </div>
+
+                              <div className="mt-4 flex flex-wrap justify-end gap-3">
+                                <button
+                                  type="button"
+                                  onClick={() => openInvoicePdf(invoice, invoice.clients)}
+                                  className="inline-flex items-center gap-2 rounded-lg border border-slate-200 px-4 py-2 text-sm hover:bg-slate-100"
+                                  title="Download invoice PDF"
+                                >
+                                  <Printer size={14} />
+                                  Print Invoice
+                                </button>
+
+                                {selectedPaymentType === 'partial' && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleInvoicePayment(invoice, { forceFull: false })}
+                                    disabled={isProcessing}
+                                    className="rounded-lg border border-brand-gold bg-white px-4 py-2 text-sm font-bold text-brand-navy disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    {isProcessing && processingInvoiceId === invoice.id ? 'Processing...' : 'Save Partial'}
+                                  </button>
+                                )}
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleInvoicePayment(invoice, { forceFull: selectedPaymentType === 'partial' })}
+                                  disabled={normalizedStatus === 'paid' || isProcessing}
+                                  className="rounded-lg bg-amber-500 px-6 py-2 text-sm font-bold text-white shadow-sm hover:bg-amber-600 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {isProcessing && processingInvoiceId === invoice.id
+                                    ? 'Processing...'
+                                    : normalizedStatus === 'paid'
+                                      ? 'Paid'
+                                      : selectedPaymentType === 'partial'
+                                        ? 'Mark Full'
+                                        : 'Submit Payment'}
+                                </button>
+                              </div>
                             </div>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   );
                 })
               )}
