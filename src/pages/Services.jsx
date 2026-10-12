@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
   ArrowDown,
@@ -11,12 +12,20 @@ import {
   Pencil,
   Plus,
   Printer,
+  RefreshCw,
   Trash2,
   X,
   Users,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import SecureDeleteModal from '../components/ui/SecureDeleteModal';
+import {
+  fetchTemplateWorkflow,
+  formatRefreshFailureMessage,
+  mergeClientWorkflowWithTemplate,
+  saveTemplateWorkflow,
+  templateWorkflowQueryKey,
+} from '../lib/templateWorkflow';
 import {
   buildStagesDataFromTemplate,
   computeStagesProgress,
@@ -86,12 +95,14 @@ const translations = {
 
 export default function Services({ language = 'en' }) {
   const t = translations[language] || translations.en;
+  const queryClient = useQueryClient();
 
   const [mode, setMode] = useState('clients'); // 'clients' | 'templates'
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
   const [deleteRequest, setDeleteRequest] = useState(null);
   const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'create' | 'edit'
@@ -138,6 +149,16 @@ export default function Services({ language = 'en' }) {
   const [editingItemDraft, setEditingItemDraft] = useState('');
   const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
   const [selectedPrintStages, setSelectedPrintStages] = useState([]);
+
+  const saveTemplateMutation = useMutation({
+    mutationKey: ['save-service-template-workflow'],
+    mutationFn: (variables) => saveTemplateWorkflow({ supabaseClient: supabase, ...variables }),
+    onSuccess: (_stages, variables) => queryClient.invalidateQueries({
+      queryKey: templateWorkflowQueryKey(variables.templateId),
+      exact: true,
+      refetchType: 'none',
+    }),
+  });
 
   const normalizeUuidOrNull = (value) => {
     if (value === undefined || value === null) return null;
@@ -509,6 +530,42 @@ export default function Services({ language = 'en' }) {
     }
   };
 
+  const handleSyncWithTemplate = async () => {
+    if (!selectedClientService || !supabase) {
+      setError('Select an assigned service before syncing.');
+      return;
+    }
+
+    const shouldSync = window.confirm(
+      'Syncing updates template prices and notes, adds new items, and removes unfinished deleted items. Client progress, links, and notes are preserved. Proceed?'
+    );
+    if (!shouldSync) return;
+
+    try {
+      setIsSyncing(true);
+      setError('');
+      setSaveMessage('');
+
+      const templateStages = await fetchTemplateWorkflow({
+        supabaseClient: supabase,
+        templateId: selectedClientService.template_id,
+      });
+      const mergedStages = mergeClientWorkflowWithTemplate(
+        selectedClientService.stages_data || [],
+        templateStages
+      );
+
+      await persistStagesData(selectedClientService.id, mergedStages);
+      setSaveMessage('Synced with template successfully.');
+      window.setTimeout(() => setSaveMessage(''), 3000);
+    } catch (err) {
+      console.error('Template sync failed:', err);
+      setError(err.message || 'Unable to sync this service with its template.');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   const handleSaveClientService = async () => {
     if (!selectedClientService || !supabase) return;
 
@@ -710,7 +767,7 @@ export default function Services({ language = 'en' }) {
     setIsPrintModalOpen(false);
   };
 
-  const loadWorkflow = async (templateId) => {
+  const loadWorkflow = async (templateId, { throwOnError = false } = {}) => {
     if (!templateId || !supabase) {
       setWorkflow([]);
       return;
@@ -720,44 +777,15 @@ export default function Services({ language = 'en' }) {
       setLoading(true);
       setError('');
 
-      const { data, error: templateError } = await supabase
-        .from('service_templates')
-        .select(`
-          *,
-          service_stages (
-            *,
-            service_steps (
-              *,
-              service_items (*)
-            )
-          )
-        `)
-        .eq('id', templateId)
-        .single();
-
-      if (templateError) throw templateError;
-
-      const stages = (data?.service_stages || [])
-        .sort((left, right) => Number(left.sort_order || 0) - Number(right.sort_order || 0))
-        .map((stage) => ({
-        ...stage,
-        steps: (stage.service_steps || [])
-          .sort((left, right) => Number(left.sort_order || 0) - Number(right.sort_order || 0))
-          .map((step) => ({
-            ...step,
-            items: (step.service_items || [])
-              .sort((left, right) => Number(left.sort_order || 0) - Number(right.sort_order || 0))
-              .map((item) => ({
-                ...item,
-                standard_note: item.standard_note || '',
-                estimated_price: Number(item.estimated_price || 0),
-              })),
-          })),
-      }));
-
+      const stages = await queryClient.fetchQuery({
+        queryKey: templateWorkflowQueryKey(templateId),
+        queryFn: () => fetchTemplateWorkflow({ supabaseClient: supabase, templateId }),
+        staleTime: 0,
+      });
       setWorkflow(stages);
     } catch (err) {
       setError(err.message || 'Unable to load template workflow.');
+      if (throwOnError) throw err;
     } finally {
       setLoading(false);
     }
@@ -791,97 +819,14 @@ export default function Services({ language = 'en' }) {
         throw new Error('Country, visa type, and professional status are required before saving the template.');
       }
 
-      for (const stage of workflow) {
-        if (!String(stage.title || '').trim()) throw new Error('Every stage must have a title before saving.');
-        for (const step of stage.steps || []) {
-          if (!String(step.title || '').trim()) throw new Error(`Every step in "${stage.title}" must have a title.`);
-          for (const item of step.items || []) {
-            if (!String(item.title || '').trim()) throw new Error(`Every item in "${step.title}" must have a title.`);
-            const estimatedPrice = Number(item.estimated_price || 0);
-            if (!Number.isFinite(estimatedPrice) || estimatedPrice < 0) {
-              throw new Error(`The estimated price for "${item.title}" must be a valid non-negative amount.`);
-            }
-          }
-        }
-      }
-
-      const { error: deleteStagesError } = await supabase
-        .from('service_stages')
-        .delete()
-        .eq('service_template_id', selectedTemplateId);
-      if (deleteStagesError) throw new Error(`Unable to replace template stages: ${deleteStagesError.message}`);
-
-      const persistedStages = [];
-      const sortedStages = [...workflow].sort((left, right) => Number(left.sort_order || 0) - Number(right.sort_order || 0));
-      for (const [stageIndex, stage] of sortedStages.entries()) {
-        const { data: insertedStage, error: stageInsertError } = await supabase
-          .from('service_stages')
-          .insert([{ service_template_id: selectedTemplateId, title: stage.title, sort_order: stageIndex }])
-          .select('id')
-          .single();
-        if (stageInsertError) throw new Error(`Unable to save stage "${stage.title}": ${stageInsertError.message}`);
-
-        const persistedStage = {
-          ...stage,
-          id: insertedStage.id,
-          service_template_id: selectedTemplateId,
-          sort_order: stageIndex,
-          steps: [],
-        };
-        const sortedSteps = [...(stage.steps || [])]
-          .sort((left, right) => Number(left.sort_order || 0) - Number(right.sort_order || 0));
-        for (const [stepIndex, step] of sortedSteps.entries()) {
-          const { data: insertedStep, error: stepInsertError } = await supabase
-            .from('service_steps')
-            .insert([{ stage_id: insertedStage.id, title: step.title, sort_order: stepIndex }])
-            .select('id')
-            .single();
-          if (stepInsertError) throw new Error(`Unable to save step "${step.title}": ${stepInsertError.message}`);
-
-          const persistedStep = {
-            ...step,
-            id: insertedStep.id,
-            stage_id: insertedStage.id,
-            sort_order: stepIndex,
-            items: [],
-          };
-          const sortedItems = [...(step.items || [])]
-            .sort((left, right) => Number(left.sort_order || 0) - Number(right.sort_order || 0));
-          for (const [itemIndex, item] of sortedItems.entries()) {
-            const itemPayload = {
-              step_id: insertedStep.id,
-              title: item.title,
-              standard_note: item.standard_note || '',
-              estimated_price: Number(item.estimated_price || 0),
-              drive_url: item.drive_url || null,
-              is_done: Boolean(item.is_done),
-              sort_order: itemIndex,
-            };
-            const { data: insertedItem, error: itemInsertError } = await supabase
-              .from('service_items')
-              .insert([itemPayload])
-              .select('*')
-              .single();
-            if (itemInsertError) throw new Error(`Unable to save item "${item.title}": ${itemInsertError.message}`);
-            persistedStep.items.push(insertedItem);
-          }
-
-          persistedStage.steps.push(persistedStep);
-        }
-        persistedStages.push(persistedStage);
-      }
-
-      const { error: templateError } = await supabase
-        .from('service_templates')
-        .update({ ...matrixPayload, title })
-        .eq('id', selectedTemplateId)
-        .select('id')
-        .single();
-
-      if (templateError) throw new Error(`service_templates update failed: ${templateError.message}`);
+      await saveTemplateMutation.mutateAsync({
+        templateId: selectedTemplateId,
+        title,
+        matrix: matrixPayload,
+        workflow,
+      });
 
       const updatedTemplate = { ...selectedTemplate, ...matrixPayload, title };
-      setWorkflow(persistedStages);
       setTemplates((previous) => previous.map((template) => (
         template.id === selectedTemplateId ? updatedTemplate : template
       )));
@@ -889,11 +834,14 @@ export default function Services({ language = 'en' }) {
       setDraftTemplateName(title);
       setEditingTemplateName(false);
 
-      await loadWorkflow(selectedTemplateId);
       try {
+        await loadWorkflow(selectedTemplateId, { throwOnError: true });
         await loadLookups();
       } catch (refreshError) {
-        setError(`Template saved, but the template list could not be refreshed: ${refreshError.message || 'Unknown error.'}`);
+        const message = formatRefreshFailureMessage('Template', refreshError);
+        setSaveMessage('Saved, but refresh failed.');
+        setError(message);
+        return;
       }
 
       setSaveMessage('Saved successfully!');
@@ -901,9 +849,7 @@ export default function Services({ language = 'en' }) {
     } catch (err) {
       const message = err?.message || 'Unable to save template.';
       console.error('Database save error:', err);
-      if (selectedTemplateId) await loadWorkflow(selectedTemplateId);
       setError(message);
-      window.alert(`Failed to save template: ${message}`);
     } finally {
       setIsSaving(false);
     }
@@ -1627,6 +1573,8 @@ export default function Services({ language = 'en' }) {
             onBack={() => setSelectedClientServiceId(null)}
             onSave={handleSaveClientService}
             isSaving={isSaving}
+            onSyncWithTemplate={handleSyncWithTemplate}
+            isSyncing={isSyncing}
             saveMessage={saveMessage}
             onToggleItem={toggleClientServiceItem}
             onUpdateLink={updateClientServiceItemLink}
@@ -2511,7 +2459,7 @@ export default function Services({ language = 'en' }) {
   );
 }
 
-function ClientServiceDetail({ row, onBack, onSave, isSaving, saveMessage, onToggleItem, onUpdateLink, onUpdateNote, editingItemId, setEditingItemId, editingItemDraft, setEditingItemDraft }) {
+function ClientServiceDetail({ row, onBack, onSave, isSaving, onSyncWithTemplate, isSyncing, saveMessage, onToggleItem, onUpdateLink, onUpdateNote, editingItemId, setEditingItemId, editingItemDraft, setEditingItemDraft }) {
   const stagesData = row.stages_data || [];
 
   return (
@@ -2536,6 +2484,15 @@ function ClientServiceDetail({ row, onBack, onSave, isSaving, saveMessage, onTog
             <p className="text-xs font-semibold uppercase tracking-[0.15em] text-brand-gold">{row.clientName}</p>
             <h3 className="font-serif text-2xl text-brand-navy">{row.templateName}</h3>
           </div>
+          <button
+            type="button"
+            onClick={onSyncWithTemplate}
+            disabled={isSyncing || isSaving}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50 disabled:cursor-wait disabled:opacity-50"
+          >
+            <RefreshCw size={16} className={isSyncing ? 'animate-spin' : ''} />
+            {isSyncing ? 'Syncing...' : 'Sync with Template'}
+          </button>
           <button
             type="button"
             onClick={onSave}
@@ -2598,6 +2555,11 @@ function ClientServiceDetail({ row, onBack, onSave, isSaving, saveMessage, onTog
                                   <span className={`whitespace-normal break-words text-sm ${itemDone ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
                                     {item.title}
                                   </span>
+                                  {item.sync_removed_from_template && (
+                                    <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-slate-500">
+                                      Removed from template
+                                    </span>
+                                  )}
                                   {Number(item.estimated_price || 0) > 0 && (
                                     <span className="whitespace-nowrap rounded bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-800">
                                       {Number(item.estimated_price).toLocaleString()} DA

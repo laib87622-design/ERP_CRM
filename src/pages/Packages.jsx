@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { formatRefreshFailureMessage } from '../lib/templateWorkflow';
 import {
   downloadBrochureLink,
   generateHotelPromotionBrochurePdf,
@@ -1428,7 +1429,7 @@ export default function Packages({ language = 'en' }) {
 
       setIsFormOpen(false);
       setToast(refetchError
-        ? `${language === 'en' ? 'Trip template saved' : 'تم حفظ قالب الرحلة'}, but refresh failed: ${refetchError.message}`
+        ? formatRefreshFailureMessage(language === 'en' ? 'Trip template' : 'قالب الرحلة', refetchError)
         : language === 'en' ? 'Trip template saved.' : 'تم حفظ قالب الرحلة.');
     } catch (error) {
       setToast(error?.message || 'Unable to save package template.');

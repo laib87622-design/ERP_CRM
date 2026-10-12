@@ -7,12 +7,14 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
+    "test": "vitest run",
     "preview": "vite preview"
   },
   "dependencies": {
     "@react-pdf/renderer": "^4.9.0",
     "@supabase/supabase-js": "^2.116.0",
     "@tailwindcss/vite": "^4.3.3",
+    "@tanstack/react-query": "^5.104.2",
     "buffer": "^6.0.3",
     "lucide-react": "^1.46.0",
     "react": "^19.2.8",
@@ -33,6 +35,7 @@
     "globals": "^17.12.0",
     "postcss": "^8.5.28",
     "tailwindcss": "^4.3.3",
-    "vite": "^8.3.0"
+    "vite": "^8.3.0",
+    "vitest": "^5.0.4"
   }
 }
