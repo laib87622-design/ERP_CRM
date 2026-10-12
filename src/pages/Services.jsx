@@ -10,7 +10,9 @@ import {
   ListChecks,
   Pencil,
   Plus,
+  Printer,
   Trash2,
+  X,
   Users,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
@@ -34,6 +36,14 @@ const getExternalUrl = (value) => {
   if (!url) return '';
   return /^https?:\/\//i.test(url) ? url : `https://${url}`;
 };
+
+const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (character) => ({
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
+}[character]));
 
 const moveInArray = (arr, fromIndex, toIndex) => {
   if (fromIndex < 0 || fromIndex >= arr.length || toIndex < 0 || toIndex >= arr.length) return arr;
@@ -126,6 +136,8 @@ export default function Services({ language = 'en' }) {
   const [itemEditor, setItemEditor] = useState(null);
   const [editingItemId, setEditingItemId] = useState(null);
   const [editingItemDraft, setEditingItemDraft] = useState('');
+  const [isPrintModalOpen, setIsPrintModalOpen] = useState(false);
+  const [selectedPrintStages, setSelectedPrintStages] = useState([]);
 
   const normalizeUuidOrNull = (value) => {
     if (value === undefined || value === null) return null;
@@ -605,6 +617,99 @@ export default function Services({ language = 'en' }) {
     ? templates.find((template) => template.id === activeTemplate.id) || activeTemplate
     : templates.find((template) => template.id === selectedTemplateId) || null;
 
+  const getPrintStageId = (stage, index) => stage.id || index;
+
+  const openPrintModal = () => {
+    setSelectedPrintStages(workflow.map((stage, index) => getPrintStageId(stage, index)));
+    setIsPrintModalOpen(true);
+  };
+
+  const togglePrintStage = (stageId) => {
+    setSelectedPrintStages((previous) => (
+      previous.includes(stageId)
+        ? previous.filter((selectedId) => selectedId !== stageId)
+        : [...previous, stageId]
+    ));
+  };
+
+  const handlePrintChecklist = () => {
+    const stagesToPrint = workflow.filter((stage, index) => (
+      selectedPrintStages.includes(getPrintStageId(stage, index))
+    ));
+    const printWindow = window.open('', '_blank');
+
+    if (!printWindow) {
+      setError('The print window was blocked. Allow pop-ups for this site and try again.');
+      return;
+    }
+
+    const title = `${selectedTemplate?.title || 'Visa Workflow'} Checklist`;
+    const stageMarkup = stagesToPrint.map((stage, stageIndex) => `
+      <section class="stage">
+        <h2 class="stage-title">${stageIndex + 1}. ${escapeHtml(stage.title || 'Stage')}</h2>
+        ${(stage.steps || []).map((step) => `
+          <div class="step">
+            ${step.title ? `<h3 class="step-title">${escapeHtml(step.title)}</h3>` : ''}
+            ${(step.items || []).map((item) => `
+              <div class="item">
+                <span class="checkbox" aria-hidden="true"></span>
+                <div class="content">
+                  <div class="item-heading">
+                    <span class="item-title">${escapeHtml(item.title || 'Checklist item')}</span>
+                    ${Number(item.estimated_price || 0) > 0
+                      ? `<span class="price">${escapeHtml(Number(item.estimated_price).toLocaleString())} DA</span>`
+                      : ''}
+                  </div>
+                  ${item.standard_note ? `<span class="item-note">${escapeHtml(item.standard_note)}</span>` : ''}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        `).join('')}
+      </section>
+    `).join('');
+
+    const html = `<!doctype html>
+      <html lang="en">
+        <head>
+          <meta charset="utf-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
+          <title>${escapeHtml(title)}</title>
+          <style>
+            @page { size: A4; margin: 16mm; }
+            body { font-family: Arial, sans-serif; color: #1e293b; margin: 0 auto; max-width: 800px; }
+            h1 { text-align: center; font-size: 22px; text-transform: uppercase; margin: 0 0 30px; color: #0f172a; border-bottom: 2px solid #e2e8f0; padding-bottom: 14px; }
+            .stage { margin-bottom: 24px; break-inside: avoid; }
+            .stage-title { font-size: 16px; background: #f8fafc; padding: 10px 14px; border-left: 4px solid #f59e0b; margin: 0 0 12px; }
+            .step { margin: 0 0 12px; }
+            .step-title { font-size: 13px; margin: 0 0 8px 14px; color: #334155; }
+            .item { display: flex; align-items: flex-start; gap: 12px; margin: 0 0 10px; padding-left: 14px; break-inside: avoid; }
+            .checkbox { width: 15px; height: 15px; border: 1.5px solid #94a3b8; border-radius: 3px; margin-top: 2px; flex: 0 0 15px; }
+            .content { flex: 1; min-width: 0; }
+            .item-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+            .item-title { font-size: 13px; font-weight: 600; }
+            .price { font-size: 10px; font-weight: 700; color: #047857; white-space: nowrap; }
+            .item-note { display: block; margin-top: 3px; font-size: 11px; line-height: 1.4; color: #64748b; font-style: italic; white-space: pre-wrap; }
+            @media print { body { max-width: none; } }
+          </style>
+        </head>
+        <body>
+          <h1>Required Documents Checklist</h1>
+          ${stageMarkup}
+        </body>
+      </html>`;
+
+    printWindow.onload = () => {
+      printWindow.addEventListener('afterprint', () => printWindow.close(), { once: true });
+      printWindow.focus();
+      printWindow.print();
+    };
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+    setIsPrintModalOpen(false);
+  };
+
   const loadWorkflow = async (templateId) => {
     if (!templateId || !supabase) {
       setWorkflow([]);
@@ -684,6 +789,20 @@ export default function Services({ language = 'en' }) {
 
       if (!matrixPayload.country_id || !matrixPayload.visa_type_id || !matrixPayload.professional_status) {
         throw new Error('Country, visa type, and professional status are required before saving the template.');
+      }
+
+      for (const stage of workflow) {
+        if (!String(stage.title || '').trim()) throw new Error('Every stage must have a title before saving.');
+        for (const step of stage.steps || []) {
+          if (!String(step.title || '').trim()) throw new Error(`Every step in "${stage.title}" must have a title.`);
+          for (const item of step.items || []) {
+            if (!String(item.title || '').trim()) throw new Error(`Every item in "${step.title}" must have a title.`);
+            const estimatedPrice = Number(item.estimated_price || 0);
+            if (!Number.isFinite(estimatedPrice) || estimatedPrice < 0) {
+              throw new Error(`The estimated price for "${item.title}" must be a valid non-negative amount.`);
+            }
+          }
+        }
       }
 
       const { error: deleteStagesError } = await supabase
@@ -769,11 +888,20 @@ export default function Services({ language = 'en' }) {
       setActiveTemplate(updatedTemplate);
       setDraftTemplateName(title);
       setEditingTemplateName(false);
+
+      await loadWorkflow(selectedTemplateId);
+      try {
+        await loadLookups();
+      } catch (refreshError) {
+        setError(`Template saved, but the template list could not be refreshed: ${refreshError.message || 'Unknown error.'}`);
+      }
+
       setSaveMessage('Saved successfully!');
       window.setTimeout(() => setSaveMessage(''), 3000);
     } catch (err) {
       const message = err?.message || 'Unable to save template.';
       console.error('Database save error:', err);
+      if (selectedTemplateId) await loadWorkflow(selectedTemplateId);
       setError(message);
       window.alert(`Failed to save template: ${message}`);
     } finally {
@@ -1902,6 +2030,15 @@ export default function Services({ language = 'en' }) {
                   )}
                   <button
                     type="button"
+                    onClick={openPrintModal}
+                    disabled={loading || workflow.length === 0}
+                    className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 font-bold text-slate-700 shadow-sm transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <Printer size={16} />
+                    Print Checklist
+                  </button>
+                  <button
+                    type="button"
                     onClick={handleSaveTemplate}
                     disabled={isSaving || saving || loading}
                     className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-5 py-2.5 font-bold text-white shadow-md transition-all hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
@@ -2307,6 +2444,67 @@ export default function Services({ language = 'en' }) {
               </button>
             </div>
           </form>
+        </div>
+      )}
+
+      {isPrintModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="print-checklist-title"
+            className="w-full max-w-md overflow-hidden rounded-xl bg-white shadow-xl"
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 p-4">
+              <h3 id="print-checklist-title" className="font-bold text-slate-800">Select Stages to Print</h3>
+              <button
+                type="button"
+                onClick={() => setIsPrintModalOpen(false)}
+                className="rounded-md p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                aria-label="Close print checklist dialog"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="max-h-96 space-y-2 overflow-y-auto p-4">
+              {workflow.map((stage, index) => {
+                const stageId = getPrintStageId(stage, index);
+                const isSelected = selectedPrintStages.includes(stageId);
+                return (
+                  <label key={stageId} className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 p-3 transition-colors hover:bg-slate-50">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => togglePrintStage(stageId)}
+                      className="mt-0.5 h-4 w-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500"
+                    />
+                    <span className="break-words text-sm font-medium text-slate-700">
+                      {index + 1}. {stage.title || 'Untitled Stage'}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-slate-100 bg-slate-50 p-4">
+              <button
+                type="button"
+                onClick={() => setIsPrintModalOpen(false)}
+                className="rounded-lg px-4 py-2 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-200"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handlePrintChecklist}
+                disabled={selectedPrintStages.length === 0}
+                className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Generate PDF
+              </button>
+            </div>
+          </section>
         </div>
       )}
     </div>

@@ -450,7 +450,7 @@ export default function TaskManager() {
 
       setShowRequestModal(false);
       resetForm();
-      await loadRequests();
+      await loadRequests(currentUser?.id, canViewAll, selectedAgentFilter);
     } catch (err) {
       setError(err.message || 'Unable to save request.');
     } finally {
@@ -470,7 +470,7 @@ export default function TaskManager() {
       const { error: deleteError } = await supabase.from('client_requests').delete().eq('id', requestId);
       if (deleteError) throw deleteError;
 
-      await loadRequests();
+      await loadRequests(currentUser?.id, canViewAll, selectedAgentFilter);
     } catch (err) {
       setError(err.message || 'Unable to delete request.');
     }

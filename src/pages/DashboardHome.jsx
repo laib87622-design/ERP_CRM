@@ -25,6 +25,18 @@ const getStatusBadgeClass = (status) => {
   return statusStyles.pending;
 };
 
+const getCountThisMonth = (items = []) => {
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth();
+
+  return items.filter((item) => {
+    if (!item.created_at) return false;
+    const itemDate = new Date(item.created_at);
+    return itemDate.getFullYear() === currentYear && itemDate.getMonth() === currentMonth;
+  }).length;
+};
+
 export default function DashboardHome({ language = 'en', agencyName = '' }) {
   const labels = {
     en: {
@@ -219,27 +231,14 @@ export default function DashboardHome({ language = 'en', agencyName = '' }) {
           return finishDate < today || booking.status === 'overdue';
         }).length;
 
-        const currentMonth = new Date();
-        const previousMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1);
-        const getMonthCount = (rows, targetMonth) =>
-          (rows || []).filter((row) => {
-            if (!row.created_at) return false;
-            const createdDate = new Date(row.created_at);
-            return createdDate.getFullYear() === targetMonth.getFullYear() && createdDate.getMonth() === targetMonth.getMonth();
-          }).length;
-
-        const clientDelta = getMonthCount(clientsRes.data || [], currentMonth) - getMonthCount(clientsRes.data || [], previousMonth);
-        const bookingDelta = getMonthCount(bookingsRes.data || [], currentMonth) - getMonthCount(bookingsRes.data || [], previousMonth);
-        const packageDelta = getMonthCount(packagesRes.data || [], currentMonth) - getMonthCount(packagesRes.data || [], previousMonth);
-
         setStats({
           clients: clientsRes.data?.length || 0,
           bookings: bookingsRes.data?.length || 0,
           packages: packagesRes.data?.length || 0,
           overdueBookings,
-          clientDelta,
-          bookingDelta,
-          packageDelta,
+          clientsThisMonth: getCountThisMonth(clientsRes.data || []),
+          bookingsThisMonth: getCountThisMonth(bookingsRes.data || []),
+          packagesThisMonth: getCountThisMonth(packagesRes.data || []),
         });
 
         setRecentBookings((recentBookingsRes.data || []).slice(0, 5));
@@ -287,7 +286,7 @@ export default function DashboardHome({ language = 'en', agencyName = '' }) {
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         {statCards.map(({ key, label, icon: Icon, accent }) => {
-          const delta = stats[`${key}Delta`] ?? 0;
+          const countThisMonth = stats[`${key}ThisMonth`] ?? 0;
           const isRedHighlight = key === 'bookings' && stats.overdueBookings > 0;
 
           return (
@@ -313,9 +312,8 @@ export default function DashboardHome({ language = 'en', agencyName = '' }) {
                 </p>
               </div>
 
-              <div className="mt-4 inline-flex rounded-full border border-brand-gold/30 bg-brand-gold/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-brand-navy">
-                {delta >= 0 ? '+' : '-'}
-                {Math.abs(delta)} this month
+              <div className="mt-4 inline-flex rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-600">
+                +{countThisMonth} this month
               </div>
             </button>
           );

@@ -1386,12 +1386,21 @@ export default function Packages({ language = 'en' }) {
 
     const persistPayload = async (record) => {
       if (editingId) {
-        const { error } = await supabase.from('package_templates').update(record).eq('id', editingId);
-        return { error };
+        const { data, error } = await supabase
+          .from('package_templates')
+          .update(record)
+          .eq('id', editingId)
+          .select('*')
+          .single();
+        return { data, error };
       }
 
-      const { error } = await supabase.from('package_templates').insert([record]);
-      return { error };
+      const { data, error } = await supabase
+        .from('package_templates')
+        .insert([record])
+        .select('*')
+        .single();
+      return { data, error };
     };
 
     try {
@@ -1404,6 +1413,13 @@ export default function Packages({ language = 'en' }) {
 
       if (result.error) throw result.error;
 
+      const savedTemplate = normalizeTripTemplate(result.data || { ...payload, id: editingId });
+      setTemplates((previous) => (
+        editingId
+          ? previous.map((template) => (template.id === editingId ? savedTemplate : template))
+          : [savedTemplate, ...previous]
+      ));
+
       const { data, error: refetchError } = await supabase.from('package_templates').select('*').order('created_at', { ascending: false });
 
       if (!refetchError) {
@@ -1411,7 +1427,9 @@ export default function Packages({ language = 'en' }) {
       }
 
       setIsFormOpen(false);
-      setToast(language === 'en' ? 'Trip template saved.' : 'تم حفظ قالب الرحلة.');
+      setToast(refetchError
+        ? `${language === 'en' ? 'Trip template saved' : 'تم حفظ قالب الرحلة'}, but refresh failed: ${refetchError.message}`
+        : language === 'en' ? 'Trip template saved.' : 'تم حفظ قالب الرحلة.');
     } catch (error) {
       setToast(error?.message || 'Unable to save package template.');
     }

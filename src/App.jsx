@@ -101,7 +101,7 @@ function App() {
     return localStorage.getItem('airvoy-theme') === 'dark';
   });
   const [session, setSession] = useState(null);
-  const [authReady, setAuthReady] = useState(false);
+  const [authReady, setAuthReady] = useState(!supabase);
   const [agency, setAgency] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
   const [notifications, setNotifications] = useState([]);
@@ -291,32 +291,44 @@ function App() {
   };
 
   useEffect(() => {
-    if (!supabase) {
-      setAuthReady(true);
-      return;
-    }
+    if (!supabase) return undefined;
 
-    const initializeSession = async () => {
-      const { data } = await supabase.auth.getSession();
-      setSession(data.session || null);
-      setAuthReady(true);
-    };
-
-    initializeSession();
-
+    let isActive = true;
+    let receivedAuthEvent = false;
     const { data: authListener } = supabase.auth.onAuthStateChange((event, newSession) => {
+      receivedAuthEvent = true;
       if (event === 'TOKEN_REFRESHED') {
         console.log('Token refreshed successfully');
       }
 
-      if (event === 'SIGNED_OUT') {
-        setSession(null);
-      }
-
       setSession(newSession || null);
+      setAuthReady(true);
     });
 
-    return () => authListener.subscription.unsubscribe();
+    const initializeSession = async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) throw error;
+
+        if (isActive && !receivedAuthEvent) {
+          setSession(data.session || null);
+          setAuthReady(true);
+        }
+      } catch (error) {
+        console.error('Unable to restore Supabase session:', error);
+        if (isActive && !receivedAuthEvent) {
+          setSession(null);
+          setAuthReady(true);
+        }
+      }
+    };
+
+    initializeSession();
+
+    return () => {
+      isActive = false;
+      authListener.subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {

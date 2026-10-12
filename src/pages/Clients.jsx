@@ -553,7 +553,7 @@ export default function Clients() {
       const { error: deleteError } = await supabase.from('clients').delete().eq('id', clientId);
       if (deleteError) throw deleteError;
 
-      await fetchClients();
+      await Promise.all([fetchClients(), fetchTagOptions()]);
     } catch (err) {
       setError(err.message || 'Unable to delete client.');
     }

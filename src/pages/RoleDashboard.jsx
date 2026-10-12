@@ -493,6 +493,10 @@ export default function RoleDashboard() {
 
       if (balanceError) throw balanceError;
 
+      setFinancialAccounts((previousAccounts) => previousAccounts.map((account) => (
+        account.id === accountId ? { ...account, current_balance: nextBalance } : account
+      )));
+
       setIsPayrollModalOpen(false);
       setError('');
       setToast('Salary payout recorded successfully.');
