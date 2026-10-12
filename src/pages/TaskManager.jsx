@@ -4,6 +4,7 @@ import { FileText, PencilLine, Plus, Trash2, X, Upload, CheckCircle2, Clock3, Sp
 import { supabase } from '../lib/supabase';
 
 const emptyRequestForm = {
+  client_id: null,
   client_name: '',
   destination: '',
   number_of_persons: '',
@@ -12,12 +13,22 @@ const emptyRequestForm = {
   source_of_request: '',
   end_date: '',
   agent: '',
-  order_status: 'Pending',
+  order_status: 'New',
   note: '',
   file: null,
 };
 
-const statusOptions = ['Pending', 'Active', 'Converted', 'Closed', 'On Hold', 'Cancelled'];
+const statusOptions = [
+  'New',
+  'Called - No Answer',
+  'In Progress',
+  'Waiting on Client',
+  'Waiting on Payment',
+  'Confirmed',
+  'Stuck / Stopped',
+  'Cancelled by Client',
+  'Cancelled by Agency',
+];
 
 const normalizeStatus = (value) => {
   const text = String(value || '').trim().toLowerCase();
@@ -27,7 +38,7 @@ const normalizeStatus = (value) => {
     return 'active';
   }
 
-  if (['converted', 'closed', 'won', 'completed', 'done', 'approved'].includes(text)) {
+  if (['converted', 'closed', 'won', 'completed', 'done', 'approved', 'cancelled by client', 'cancelled by agency'].includes(text)) {
     return 'closed';
   }
 
@@ -62,6 +73,8 @@ export default function TaskManager() {
   const [currentUser, setCurrentUser] = useState(null);
   const [canViewAll, setCanViewAll] = useState(false);
   const [agents, setAgents] = useState([]);
+  const [clientsList, setClientsList] = useState([]);
+  const [isNewClient, setIsNewClient] = useState(false);
   const [selectedAgentFilter, setSelectedAgentFilter] = useState('ALL');
   const [filters, setFilters] = useState({
     client: '',
@@ -92,6 +105,32 @@ export default function TaskManager() {
   const [customDestination, setCustomDestination] = useState('');
   const [customService, setCustomService] = useState('');
   const [customSource, setCustomSource] = useState('');
+
+  useEffect(() => {
+    let isActive = true;
+
+    const fetchClients = async () => {
+      if (!supabase) return;
+
+      try {
+        const { data, error: clientsError } = await supabase
+          .from('clients')
+          .select('id, full_name, email, phone')
+          .order('full_name', { ascending: true });
+
+        if (!isActive) return;
+        if (clientsError) throw clientsError;
+        setClientsList(data || []);
+      } catch (clientsError) {
+        if (isActive) setError(clientsError.message || 'Unable to load clients.');
+      }
+    };
+
+    fetchClients();
+    return () => {
+      isActive = false;
+    };
+  }, []);
 
   const stats = useMemo(() => {
     const total = requests.length;
@@ -255,6 +294,7 @@ export default function TaskManager() {
     setMode('create');
     setEditingId(null);
     setForm(emptyRequestForm);
+    setIsNewClient(false);
     setEmail('');
     setPhone('');
     setCustomDestination('');
@@ -268,10 +308,13 @@ export default function TaskManager() {
   };
 
   const openEditModal = (request) => {
+    const selectedClient = clientsList.find((client) => client.id === request.client_id) || null;
     setMode('edit');
     setEditingId(request.id);
+    setIsNewClient(!selectedClient);
     setForm({
-      client_name: request.client_name || '',
+      client_id: selectedClient?.id || null,
+      client_name: selectedClient?.full_name || request.client_name || '',
       destination: request.destination || '',
       number_of_persons: request.number_of_persons ?? '',
       budget: request.budget ?? '',
@@ -279,12 +322,12 @@ export default function TaskManager() {
       source_of_request: request.source_of_request || '',
       end_date: request.end_date ? request.end_date.split('T')[0] : '',
       agent: request.agent_id || request.agent || request.agent_name || '',
-      order_status: request.order_status || 'Pending',
+      order_status: request.order_status || 'New',
       note: request.note || '',
       file: null,
     });
-    setEmail(request.email || '');
-    setPhone(request.phone || '');
+    setEmail(selectedClient?.email || request.email || '');
+    setPhone(selectedClient?.phone || request.phone || '');
     setCustomDestination(request.destination && !uniqueDestinations.includes(request.destination) ? request.destination : '');
     setCustomService(request.service_type && !uniqueServices.includes(request.service_type) ? request.service_type : '');
     setCustomSource(request.source_of_request && !uniqueSources.includes(request.source_of_request) ? request.source_of_request : '');
@@ -350,18 +393,22 @@ export default function TaskManager() {
       service_type: serviceValue,
       source_of_request: sourceValue,
       end_date: form.end_date || null,
-      order_status: form.order_status || 'Pending',
+      order_status: form.order_status || 'New',
       note: form.note.trim(),
       email: email.trim(),
       phone: phone.trim(),
     };
 
+    if (form.client_id) {
+      payload.client_id = form.client_id;
+    }
+
     if (form.agent && form.agent.trim()) {
       payload.agent_id = form.agent.trim();
     }
 
-    if (!payload.client_name || (!payload.email && !payload.phone) || !payload.destination || !payload.service_type) {
-      setError('Client Name, Email or Phone, Destination, and Service Type are required.');
+    if (!payload.client_name || (!payload.email && !payload.phone && !payload.client_id) || !payload.destination || !payload.service_type) {
+      setError('Client Name, Email or Phone (unless selecting an existing client), Destination, and Service Type are required.');
       return;
     }
 
@@ -374,30 +421,29 @@ export default function TaskManager() {
         payload.attachment_url = uploadedUrl;
       }
 
-      let saveError = null;
+      const persistRequest = async (requestPayload) => {
+        if (mode === 'edit' && editingId) {
+          const { error: requestError } = await supabase.from('client_requests').update(requestPayload).eq('id', editingId);
+          return requestError;
+        }
 
-      if (mode === 'edit' && editingId) {
-        const { error } = await supabase.from('client_requests').update(payload).eq('id', editingId);
-        saveError = error;
-      } else {
-        const { error } = await supabase.from('client_requests').insert([payload]);
-        saveError = error;
+        const { error: requestError } = await supabase.from('client_requests').insert([requestPayload]);
+        return requestError;
+      };
+
+      let payloadToSave = payload;
+      let saveError = await persistRequest(payloadToSave);
+
+      if (saveError && payloadToSave.client_id && /client_id.*(column|schema cache)|((column|schema cache).*client_id)/i.test(saveError.message || '')) {
+        payloadToSave = { ...payloadToSave };
+        delete payloadToSave.client_id;
+        saveError = await persistRequest(payloadToSave);
       }
 
       if (saveError && uploadedUrl) {
-        const fallbackPayload = { ...payload };
-        delete fallbackPayload.attachment_url;
-
-        if (mode === 'edit' && editingId) {
-          const { error: fallbackError } = await supabase
-            .from('client_requests')
-            .update(fallbackPayload)
-            .eq('id', editingId);
-          saveError = fallbackError;
-        } else {
-          const { error: fallbackError } = await supabase.from('client_requests').insert([fallbackPayload]);
-          saveError = fallbackError;
-        }
+        payloadToSave = { ...payloadToSave };
+        delete payloadToSave.attachment_url;
+        saveError = await persistRequest(payloadToSave);
       }
 
       if (saveError) throw saveError;
@@ -682,10 +728,80 @@ export default function TaskManager() {
 
             <form onSubmit={handleSaveRequest} className="space-y-5">
               <div className="grid gap-4 md:grid-cols-2">
-                <label className="space-y-2 text-sm font-medium text-slate-700">
-                  <span>Client Name</span>
-                  <input value={form.client_name} onChange={(e) => handleFieldChange('client_name', e.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 outline-none transition focus:border-brand-gold focus:bg-white" placeholder="Client Name" />
-                </label>
+                <div className="space-y-2 text-sm font-medium text-slate-700">
+                  <label htmlFor="request-client" className="block">Client Name</label>
+                  {!isNewClient && clientsList.length > 0 ? (
+                    <select
+                      id="request-client"
+                      required
+                      value={form.client_id || ''}
+                      onChange={(event) => {
+                        const { value } = event.target;
+                        if (value === 'NEW_CLIENT') {
+                          setIsNewClient(true);
+                          setForm((previousForm) => ({
+                            ...previousForm,
+                            client_name: '',
+                            client_id: null,
+                          }));
+                          setEmail('');
+                          setPhone('');
+                        } else {
+                          const selectedClient = clientsList.find((client) => String(client.id) === value);
+                          setForm((previousForm) => ({
+                            ...previousForm,
+                            client_name: selectedClient?.full_name || '',
+                            client_id: selectedClient?.id || null,
+                          }));
+                          setEmail(selectedClient?.email || '');
+                          setPhone(selectedClient?.phone || '');
+                        }
+                      }}
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 outline-none transition focus:border-brand-gold focus:bg-white"
+                    >
+                      <option value="">Select an existing client...</option>
+                      {clientsList.map((client) => (
+                        <option key={client.id} value={client.id}>{client.full_name}</option>
+                      ))}
+                      <option value="NEW_CLIENT" className="font-bold text-amber-600">+ Add New Client...</option>
+                    </select>
+                  ) : (
+                    <div className="relative">
+                      <input
+                        id="request-client"
+                        type="text"
+                        required
+                        placeholder="Enter new client name..."
+                        value={form.client_name}
+                        onChange={(event) => setForm((previousForm) => ({
+                          ...previousForm,
+                          client_name: event.target.value,
+                          client_id: null,
+                        }))}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 pr-20 outline-none transition focus:border-brand-gold focus:bg-white"
+                        autoFocus
+                      />
+                      {clientsList.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsNewClient(false);
+                            setForm((previousForm) => ({
+                              ...previousForm,
+                              client_name: '',
+                              client_id: null,
+                            }));
+                            setEmail('');
+                            setPhone('');
+                          }}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-400 hover:text-slate-600"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
 
                 <label className="space-y-2 text-sm font-medium text-slate-700">
                   <span>Email</span>
@@ -784,8 +900,11 @@ export default function TaskManager() {
                 <label className="space-y-2 text-sm font-medium text-slate-700">
                   <span>Order Status</span>
                   <select value={form.order_status} onChange={(e) => handleFieldChange('order_status', e.target.value)} className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 outline-none transition focus:border-brand-gold focus:bg-white">
-                    {statusOptions.map((status) => (
-                      <option key={status} value={status}>{status}</option>
+                    {form.order_status && !statusOptions.includes(form.order_status) && (
+                      <option value={form.order_status}>{form.order_status}</option>
+                    )}
+                    {statusOptions.map((status, index) => (
+                      <option key={status} value={status}>{index + 1} - {status}</option>
                     ))}
                   </select>
                 </label>

@@ -98,6 +98,7 @@ export default function Clients() {
   const [sexFilter, setSexFilter] = useState('All');
   const [maritalStatusFilter, setMaritalStatusFilter] = useState('All');
   const [passportStatusFilter, setPassportStatusFilter] = useState('All');
+  const [filterTag, setFilterTag] = useState('ALL');
   const [sortMode, setSortMode] = useState('newest');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -108,6 +109,7 @@ export default function Clients() {
   const [tagOptions, setTagOptions] = useState([]);
   const [tagMenuOpen, setTagMenuOpen] = useState(false);
   const [customTagDraft, setCustomTagDraft] = useState('');
+  const [deletingTag, setDeletingTag] = useState('');
   const [companions, setCompanions] = useState([emptyCompanion()]);
   const [relationshipOptions, setRelationshipOptions] = useState([]);
   const [clientMetrics, setClientMetrics] = useState({
@@ -117,6 +119,7 @@ export default function Clients() {
   });
   const [toast, setToast] = useState(null);
   const navigate = useNavigate();
+  const allTags = [...new Set(clients.flatMap((client) => normalizeClientTags(client.tags)))].sort((a, b) => a.localeCompare(b));
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -266,6 +269,7 @@ export default function Clients() {
 
       const matchesSearch = !query || haystack.includes(query);
       const matchesSex = sexFilter === 'All' || (client.sex || '').trim().toLowerCase() === sexFilter.toLowerCase();
+      const matchesTag = filterTag === 'ALL' || normalizeClientTags(client.tags).includes(filterTag);
       const matchesMaritalStatus =
         maritalStatusFilter === 'All' ||
         (client.marital_status || '').trim().toLowerCase() === maritalStatusFilter.toLowerCase();
@@ -277,7 +281,7 @@ export default function Clients() {
         (passportStatusFilter === 'expiring_soon' && passportStatus === 'expiring_soon') ||
         (passportStatusFilter === 'expired' && passportStatus === 'expired');
 
-      return matchesSearch && matchesSex && matchesMaritalStatus && matchesPassportStatus;
+      return matchesSearch && matchesSex && matchesTag && matchesMaritalStatus && matchesPassportStatus;
     });
 
     return nextClients.sort((a, b) => {
@@ -293,7 +297,7 @@ export default function Clients() {
 
       return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
     });
-  }, [clients, maritalStatusFilter, passportStatusFilter, searchTerm, sexFilter, sortMode]);
+  }, [clients, filterTag, maritalStatusFilter, passportStatusFilter, searchTerm, sexFilter, sortMode]);
 
   const openCreateModal = () => {
     setSelectedClient(null);
@@ -423,6 +427,38 @@ export default function Clients() {
       ...prev,
       tags: normalizeClientTags(prev.tags).filter((tag) => tag !== tagToRemove),
     }));
+  };
+
+  const deleteSavedTag = async (tag, event) => {
+    event.stopPropagation();
+    if (!window.confirm(`Delete "${tag}" from all clients?`)) return;
+
+    if (!supabase) {
+      setError('Supabase is not configured.');
+      return;
+    }
+
+    const clientsWithTag = clients.filter((client) => normalizeClientTags(client.tags).includes(tag));
+    setDeletingTag(tag);
+    setError('');
+
+    try {
+      const results = await Promise.all(clientsWithTag.map((client) => (
+        supabase
+          .from('clients')
+          .update({ tags: normalizeClientTags(client.tags).filter((clientTag) => clientTag !== tag) })
+          .eq('id', client.id)
+      )));
+
+      const deleteError = results.find((result) => result.error)?.error;
+      removeTag(tag);
+      await Promise.all([fetchClients(), fetchTagOptions()]);
+      if (deleteError) throw deleteError;
+    } catch (deleteError) {
+      setError(deleteError.message || `Unable to delete the ${tag} tag.`);
+    } finally {
+      setDeletingTag('');
+    }
   };
 
   const handleSubmit = async (event) => {
@@ -626,6 +662,17 @@ export default function Clients() {
               <option value="name">Name A–Z</option>
               <option value="passport">Passport Expiry</option>
             </select>
+
+            <select
+              value={filterTag}
+              onChange={(event) => setFilterTag(event.target.value)}
+              className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-brand-navy outline-none focus:border-brand-gold"
+            >
+              <option value="ALL">All Tags</option>
+              {allTags.map((tag) => (
+                <option key={tag} value={tag}>{tag}</option>
+              ))}
+            </select>
           </div>
         </div>
       </div>
@@ -692,6 +739,13 @@ export default function Clients() {
                                 {client.reference}
                               </button>
                             )}
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {[...new Set(normalizeClientTags(client.tags))].map((tag) => (
+                                <span key={tag} className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800">
+                                  {tag}
+                                </span>
+                              ))}
+                            </div>
                           </div>
                         </div>
                       </td>
@@ -833,21 +887,30 @@ export default function Clients() {
                             <div className="px-2 py-3 text-sm text-slate-500">No saved tags yet</div>
                           ) : (
                             tagOptions.map((tag) => (
-                              <button
-                                key={tag}
-                                type="button"
-                                onClick={() => {
-                                  toggleTagSelection(tag);
-                                }}
-                                className={`flex w-full items-center justify-between rounded-lg px-2 py-2 text-left text-sm ${
-                                  normalizeClientTags(form.tags).includes(tag)
-                                    ? 'bg-[#fff7dd] text-brand-navy'
-                                    : 'text-slate-600 hover:bg-slate-50'
-                                }`}
-                              >
-                                <span>{tag}</span>
-                                {normalizeClientTags(form.tags).includes(tag) && <span className="text-xs font-bold text-brand-navy">✓</span>}
-                              </button>
+                              <div key={tag} className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => toggleTagSelection(tag)}
+                                  className={`flex min-w-0 flex-1 items-center justify-between rounded-lg px-2 py-2 text-left text-sm ${
+                                    normalizeClientTags(form.tags).includes(tag)
+                                      ? 'bg-[#fff7dd] text-brand-navy'
+                                      : 'text-slate-600 hover:bg-slate-50'
+                                  }`}
+                                >
+                                  <span className="truncate">{tag}</span>
+                                  {normalizeClientTags(form.tags).includes(tag) && <span className="ml-2 text-xs font-bold text-brand-navy">✓</span>}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={(event) => deleteSavedTag(tag, event)}
+                                  disabled={deletingTag === tag}
+                                  className="rounded-md p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-wait disabled:opacity-50"
+                                  aria-label={`Delete ${tag} tag from all clients`}
+                                  title="Delete tag from all clients"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
                             ))
                           )}
 
