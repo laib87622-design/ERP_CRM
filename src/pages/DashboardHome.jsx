@@ -10,12 +10,6 @@ import {
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
-const priorityStyles = {
-  High: 'bg-red-100 text-red-700',
-  Medium: 'bg-amber-100 text-amber-700',
-  Low: 'bg-sky-100 text-sky-700',
-};
-
 const statusStyles = {
   pending: 'bg-amber-100 text-amber-700',
   confirmed: 'bg-emerald-100 text-emerald-700',
@@ -81,6 +75,10 @@ export default function DashboardHome({ language = 'en', agencyName = '' }) {
   const [recentBookings, setRecentBookings] = useState([]);
   const [pendingTasks, setPendingTasks] = useState([]);
   const [platformLinks, setPlatformLinks] = useState([]);
+  const [isPlatformModalOpen, setIsPlatformModalOpen] = useState(false);
+  const [isNewCategory, setIsNewCategory] = useState(false);
+  const [platformForm, setPlatformForm] = useState({ name: '', url: '', category: '' });
+  const [isSavingPlatform, setIsSavingPlatform] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -119,37 +117,49 @@ export default function DashboardHome({ language = 'en', agencyName = '' }) {
     fetchLinks();
   }, [fetchLinks]);
 
-  const handleAddLink = async () => {
+  const handleSavePlatform = async (event) => {
+    event.preventDefault();
     if (!supabase) {
       setError('Supabase is not configured.');
       return;
     }
 
-    const nameInput = window.prompt('Enter platform name (e.g., Booking.com):');
-    const name = nameInput?.trim();
-    if (!name) return;
+    const name = platformForm.name.trim();
+    const rawUrl = platformForm.url.trim();
+    if (!name || !rawUrl) return;
 
-    const urlInput = window.prompt('Enter platform URL (e.g., https://booking.com):');
-    const rawUrl = urlInput?.trim();
-    if (!rawUrl) return;
-
-    let url;
+    let formattedUrl = rawUrl;
     try {
-      url = new URL(rawUrl);
-      if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Only HTTP and HTTPS links are allowed.');
+      if (!/^https?:\/\//i.test(formattedUrl)) formattedUrl = `https://${formattedUrl}`;
+      const parsedUrl = new URL(formattedUrl);
+      if (!['http:', 'https:'].includes(parsedUrl.protocol)) throw new Error('Only HTTP and HTTPS links are allowed.');
     } catch (urlError) {
       setError(urlError.message === 'Only HTTP and HTTPS links are allowed.' ? urlError.message : 'Enter a valid platform URL beginning with https://.');
       return;
     }
 
-    const { error: insertError } = await supabase.from('agency_links').insert({ name, url: url.toString() });
-    if (insertError) {
-      setError(insertError.message || 'Unable to add platform link.');
-      return;
-    }
+    setIsSavingPlatform(true);
+    try {
+      const { error: insertError } = await supabase.from('agency_links').insert({
+        name,
+        url: formattedUrl,
+        category: platformForm.category.trim() || 'General',
+      });
+      if (insertError) {
+        setError(insertError.message || 'Unable to add platform link.');
+        return;
+      }
 
-    setError('');
-    await fetchLinks();
+      setError('');
+      setIsPlatformModalOpen(false);
+      setIsNewCategory(false);
+      setPlatformForm({ name: '', url: '', category: '' });
+      await fetchLinks();
+    } catch (saveError) {
+      setError(saveError.message || 'Unable to add platform link.');
+    } finally {
+      setIsSavingPlatform(false);
+    }
   };
 
   const handleDeleteLink = async (id, event) => {
@@ -182,19 +192,24 @@ export default function DashboardHome({ language = 'en', agencyName = '' }) {
           return;
         }
 
-        const [clientsRes, bookingsRes, packagesRes, recentBookingsRes, tasksRes] = await Promise.all([
+        const [clientsRes, bookingsRes, packagesRes, recentBookingsRes, requestsRes] = await Promise.all([
           supabase.from('clients').select('id, created_at'),
           supabase.from('bookings').select('id, status, finish_date, created_at, clients(full_name)'),
           supabase.from('package_templates').select('id, created_at'),
           supabase.from('bookings').select('id, status, finish_date, clients(full_name)').order('id', { ascending: false }).limit(5),
-          supabase.from('tasks').select('id, title, status, priority').in('status', ['todo', 'in_progress']).order('id', { ascending: false }).limit(4),
+          supabase
+            .from('client_requests')
+            .select('id, client_name, service_type, end_date')
+            .in('order_status', ['Pending', 'Active', 'pending', 'active'])
+            .order('created_at', { ascending: false })
+            .limit(5),
         ]);
 
         if (clientsRes.error) throw clientsRes.error;
         if (bookingsRes.error) throw bookingsRes.error;
         if (packagesRes.error) throw packagesRes.error;
         if (recentBookingsRes.error) throw recentBookingsRes.error;
-        if (tasksRes.error) throw tasksRes.error;
+        if (requestsRes.error) throw requestsRes.error;
 
         const overdueBookings = (bookingsRes.data || []).filter((booking) => {
           if (!booking.finish_date || booking.status === 'cancelled') return false;
@@ -228,7 +243,7 @@ export default function DashboardHome({ language = 'en', agencyName = '' }) {
         });
 
         setRecentBookings((recentBookingsRes.data || []).slice(0, 5));
-        setPendingTasks((tasksRes.data || []).slice(0, 4));
+        setPendingTasks(requestsRes.data || []);
       } catch (err) {
         setError(err.message || 'Unable to load dashboard data.');
       } finally {
@@ -248,6 +263,14 @@ export default function DashboardHome({ language = 'en', agencyName = '' }) {
 
     navigate(routes[key] || '/');
   };
+
+  const groupedLinks = platformLinks.reduce((groups, link) => {
+    const category = link.category?.trim() || 'General';
+    if (!groups[category]) groups[category] = [];
+    groups[category].push(link);
+    return groups;
+  }, {});
+  const existingCategories = [...new Set(platformLinks.map((link) => link.category?.trim()).filter(Boolean))];
 
   return (
     <div className="space-y-6">
@@ -348,14 +371,20 @@ export default function DashboardHome({ language = 'en', agencyName = '' }) {
                 <p className="text-sm text-slate-500">{t.noTasks}</p>
               ) : (
                 pendingTasks.map((task) => (
-                  <div key={task.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                  <button
+                    key={task.id}
+                    type="button"
+                    onClick={() => navigate('/task-manager')}
+                    className="flex w-full items-center justify-between gap-3 rounded-lg border border-slate-100 p-3 text-left transition-colors hover:bg-slate-50"
+                  >
                     <div>
-                      <p className="text-sm font-medium text-brand-navy">{task.title}</p>
+                      <p className="text-sm font-bold text-slate-800">{task.client_name || 'Client'}</p>
+                      <p className="text-xs text-slate-500">{task.service_type || '—'}</p>
                     </div>
-                    <span className={`inline-flex rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-[0.1em] ${priorityStyles[task.priority] || priorityStyles.Medium}`}>
-                      {task.priority || 'Medium'}
+                    <span className="shrink-0 rounded bg-amber-50 px-2 py-1 text-xs font-medium text-amber-600">
+                      {task.end_date || 'No Date'}
                     </span>
-                  </div>
+                  </button>
                 ))
               )}
             </div>
@@ -366,7 +395,11 @@ export default function DashboardHome({ language = 'en', agencyName = '' }) {
               <h3 className="text-lg font-semibold text-brand-navy">Quick Platforms</h3>
               <button
                 type="button"
-                onClick={handleAddLink}
+                onClick={() => {
+                  setIsNewCategory(false);
+                  setPlatformForm((current) => ({ ...current, category: '' }));
+                  setIsPlatformModalOpen(true);
+                }}
                 className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-brand-navy px-2.5 py-2 text-xs font-semibold text-white transition hover:bg-slate-800"
               >
                 <Plus size={14} />
@@ -377,52 +410,176 @@ export default function DashboardHome({ language = 'en', agencyName = '' }) {
             {platformLinks.length === 0 ? (
               <p className="text-sm text-slate-500">No platforms added yet.</p>
             ) : (
-              <div className="grid grid-cols-2 gap-2">
-                {platformLinks.map((link) => (
-                  <div key={link.id} className="flex min-w-0 items-center rounded-lg border border-slate-200 bg-slate-50 transition hover:border-brand-gold">
-                    <a
-                      href={link.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="min-w-0 flex-1 truncate px-3 py-2.5 text-sm font-medium text-brand-navy"
-                      title={link.name}
-                    >
-                      {link.name}
-                    </a>
-                    <button
-                      type="button"
-                      onClick={(event) => handleDeleteLink(link.id, event)}
-                      className="mr-1 rounded-md p-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-600"
-                      aria-label={`Delete ${link.name}`}
-                      title={`Delete ${link.name}`}
-                    >
-                      <X size={14} />
-                    </button>
+                        <div className="space-y-3">
+                          {Object.entries(groupedLinks).map(([category, links]) => (
+                            <section key={category}>
+                              <h4 className="mb-2 mt-3 text-xs font-bold uppercase text-slate-400">{category}</h4>
+                              <div className="grid grid-cols-2 gap-2">
+                                {links.map((link) => (
+                                  <div key={link.id} className="flex min-w-0 items-center rounded-lg border border-slate-200 bg-slate-50 transition hover:border-brand-gold">
+                                    <a
+                                      href={link.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="min-w-0 flex-1 truncate px-3 py-2.5 text-sm font-medium text-brand-navy"
+                                      title={link.name}
+                                    >
+                                      {link.name}
+                                    </a>
+                                    <button
+                                      type="button"
+                                      onClick={(event) => handleDeleteLink(link.id, event)}
+                                      className="mr-1 rounded-md p-1.5 text-slate-400 transition hover:bg-red-50 hover:text-red-600"
+                                      aria-label={`Delete ${link.name}`}
+                                      title={`Delete ${link.name}`}
+                                    >
+                                      <X size={14} />
+                                    </button>
+                                  </div>
+                                ))}
+                              </div>
+                            </section>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-wrap gap-3">
-          {quickActions.map(({ key, label, route, filled }) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => navigate(route)}
-              className={`inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold transition ${
-                filled ? 'bg-brand-gold text-brand-navy shadow-sm' : 'border border-slate-200 bg-white text-brand-navy hover:border-brand-gold'
-              }`}
-            >
-              <Plus size={16} />
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="flex flex-wrap gap-3">
+                      {quickActions.map(({ key, label, route, filled }) => (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => navigate(route)}
+                          className={`inline-flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold transition ${
+                            filled ? 'bg-brand-gold text-brand-navy shadow-sm' : 'border border-slate-200 bg-white text-brand-navy hover:border-brand-gold'
+                          }`}
+                        >
+                          <Plus size={16} />
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {isPlatformModalOpen && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
+                      <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="platform-modal-title"
+                        className="w-full max-w-md overflow-hidden rounded-xl bg-white shadow-xl"
+                      >
+                        <div className="flex items-center justify-between border-b border-slate-100 p-4">
+                          <h3 id="platform-modal-title" className="font-bold text-slate-800">Add Quick Platform</h3>
+                          <button
+                            type="button"
+                            onClick={() => setIsPlatformModalOpen(false)}
+                            className="rounded-md p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+                            aria-label="Close dialog"
+                          >
+                            <X size={18} />
+                          </button>
+                        </div>
+                        <form onSubmit={handleSavePlatform} className="space-y-4 p-4">
+                          <div>
+                            <label htmlFor="platform-name" className="mb-1 block text-sm font-medium text-slate-700">Platform Name</label>
+                            <input
+                              id="platform-name"
+                              type="text"
+                              required
+                              value={platformForm.name}
+                              onChange={(event) => setPlatformForm((current) => ({ ...current, name: event.target.value }))}
+                              className="w-full rounded-lg border border-slate-200 px-3 py-2 focus:border-brand-gold focus:outline-none focus:ring-1 focus:ring-brand-gold"
+                              placeholder="e.g., Booking.com"
+                            />
+                          </div>
+                          <div>
+                            <label htmlFor="platform-category" className="mb-1 block text-sm font-medium text-slate-700">Category / Group</label>
+                            {!isNewCategory && existingCategories.length > 0 ? (
+                              <select
+                                id="platform-category"
+                                required
+                                value={platformForm.category}
+                                onChange={(event) => {
+                                  if (event.target.value === 'NEW_CATEGORY') {
+                                    setIsNewCategory(true);
+                                    setPlatformForm((current) => ({ ...current, category: '' }));
+                                  } else {
+                                    setPlatformForm((current) => ({ ...current, category: event.target.value }));
+                                  }
+                                }}
+                                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 focus:border-brand-gold focus:outline-none focus:ring-1 focus:ring-brand-gold"
+                              >
+                                <option value="" disabled>Select a category...</option>
+                                {existingCategories.map((category) => (
+                                  <option key={category} value={category}>{category}</option>
+                                ))}
+                                <option value="NEW_CATEGORY" className="font-bold text-amber-600">+ Add new category...</option>
+                              </select>
+                            ) : (
+                              <div className="relative">
+                                <input
+                                  id="platform-category"
+                                  type="text"
+                                  required
+                                  value={platformForm.category}
+                                  onChange={(event) => setPlatformForm((current) => ({ ...current, category: event.target.value }))}
+                                  className="w-full rounded-lg border border-slate-200 px-3 py-2 pr-20 focus:border-brand-gold focus:outline-none focus:ring-1 focus:ring-brand-gold"
+                                  placeholder="Type new category..."
+                                  autoFocus
+                                />
+                                {existingCategories.length > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setIsNewCategory(false);
+                                      setPlatformForm((current) => ({ ...current, category: existingCategories[0] }));
+                                    }}
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-xs font-medium text-slate-400 hover:text-slate-600"
+                                  >
+                                    Cancel
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          <div>
+                            <label htmlFor="platform-url" className="mb-1 block text-sm font-medium text-slate-700">URL</label>
+                            <input
+                              id="platform-url"
+                              type="text"
+                              required
+                              value={platformForm.url}
+                              onChange={(event) => setPlatformForm((current) => ({ ...current, url: event.target.value }))}
+                              className="w-full rounded-lg border border-slate-200 px-3 py-2 focus:border-brand-gold focus:outline-none focus:ring-1 focus:ring-brand-gold"
+                              placeholder="booking.com"
+                            />
+                          </div>
+                          <div className="flex justify-end gap-2 pt-2">
+                            <button
+                              type="button"
+                              onClick={() => setIsPlatformModalOpen(false)}
+                              disabled={isSavingPlatform}
+                              className="rounded-lg border border-slate-200 px-4 py-2 text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="submit"
+                              disabled={isSavingPlatform}
+                              className="rounded-lg bg-slate-900 px-4 py-2 font-bold text-white hover:bg-slate-800 disabled:cursor-wait disabled:opacity-50"
+                            >
+                              {isSavingPlatform ? 'Saving...' : 'Save Platform'}
+                            </button>
+                          </div>
+                        </form>
+                      </div>
+                    </div>
+                  )}
     </div>
   );
 }
