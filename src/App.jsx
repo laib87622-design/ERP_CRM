@@ -4,6 +4,7 @@ import { Bell, Menu, Globe, X, Sun, Moon } from 'lucide-react';
 import './index.css';
 import { deliverPushNotification, notificationChannels } from './lib/notifications';
 import { fetchAgencySettings } from './lib/agencySettings';
+import { FinancialPasswordProvider } from './components/FinancialPasswordProvider';
 import Sidebar from './components/layout/Sidebar';
 import ProtectedRoute from './components/ProtectedRoute';
 import Bank from './pages/Bank';
@@ -425,12 +426,13 @@ function App() {
 
   return (
     <Router>
-      <div
-        data-theme={isDarkMode ? 'dark' : 'light'}
-        className={`flex h-screen overflow-hidden font-sans ${isDarkMode ? 'bg-[#0a1120] text-slate-50' : 'bg-brand-surface text-brand-navy'}`}
-        dir={isRTL ? 'rtl' : 'ltr'}
-        lang={language}
-      >
+      <FinancialPasswordProvider>
+        <div
+          data-theme={isDarkMode ? 'dark' : 'light'}
+          className={`flex h-screen overflow-hidden font-sans ${isDarkMode ? 'bg-[#0a1120] text-slate-50' : 'bg-brand-surface text-brand-navy'}`}
+          dir={isRTL ? 'rtl' : 'ltr'}
+          lang={language}
+        >
         <Sidebar isOpen={isSidebarOpen} language={language} ui={ui} isDarkMode={isDarkMode} agency={agency} userProfile={userProfile} />
 
         <div className="flex flex-1 flex-col">
@@ -656,7 +658,8 @@ function App() {
             </Routes>
           </main>
         </div>
-      </div>
+        </div>
+      </FinancialPasswordProvider>
     </Router>
   );
 }

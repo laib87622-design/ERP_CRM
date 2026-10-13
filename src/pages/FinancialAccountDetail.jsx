@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Building2, CreditCard, Landmark, Pencil, Trash2, Wallet } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/currency';
+import { useFinancialPasswordConfirmation } from '../components/useFinancialPasswordConfirmation';
 
 const paymentMethodOptions = ['Cash', 'Bank Transfer', 'CCP', 'Credit Card', 'BaridiMob'];
 
@@ -18,6 +19,7 @@ const emptyForm = {
 };
 
 export default function FinancialAccountDetail() {
+  const confirmAction = useFinancialPasswordConfirmation();
   const { accountId } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -47,17 +49,20 @@ export default function FinancialAccountDetail() {
           .eq('id', accountId)
           .single(),
         supabase
-          .from('financial_account_transactions')
-          .select('*')
+          .from('bank_entries')
+          .select('id, operation_date, description, operation_type, third_party, debit, credit, account_id, financial_accounts(label)')
           .eq('account_id', accountId)
-          .order('created_at', { ascending: false }),
+          .order('operation_date', { ascending: false }),
       ]);
 
       if (accountRes.error) throw accountRes.error;
       if (txRes.error) throw txRes.error;
 
       setAccount(accountRes.data);
-      setTransactions(txRes.data || []);
+      setTransactions((txRes.data || []).map((entry) => ({
+        ...entry,
+        account_label: entry.financial_accounts?.label || accountRes.data.label || '',
+      })));
       setForm({
         label: accountRes.data.label || '',
         currency: accountRes.data.currency || 'DZD',
@@ -100,6 +105,9 @@ export default function FinancialAccountDetail() {
       setError('Initial balance must be a valid number.');
       return;
     }
+
+    const isAuthorized = await confirmAction('financial account balance update');
+    if (!isAuthorized) return;
 
     try {
       setSaving(true);
@@ -147,7 +155,8 @@ export default function FinancialAccountDetail() {
 
   const handleDelete = async () => {
     if (!supabase || !accountId) return;
-    if (!window.confirm('Delete this financial account?')) return;
+    const isAuthorized = await confirmAction('financial account deletion');
+    if (!isAuthorized) return;
 
     try {
       setError('');
@@ -376,14 +385,25 @@ export default function FinancialAccountDetail() {
                 <div key={item.id} className="rounded-xl border border-slate-200 bg-brand-surface p-3">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="font-medium text-brand-navy">{item.description || 'Account transaction'}</p>
-                      <p className="mt-1 text-xs text-slate-500">{new Date(item.created_at).toLocaleString('en-GB')}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className={`font-mono text-sm font-semibold ${item.type === 'in' ? 'text-emerald-600' : 'text-red-600'}`}>
-                        {item.type === 'in' ? '+' : '-'}{formatCurrency(Number(item.amount || 0))}
+                      <p className="font-medium text-brand-navy">{item.description || '—'}</p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {item.operation_date ? new Date(item.operation_date).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }) : '—'}
+                        {item.operation_type ? ` · ${item.operation_type}` : ''}
                       </p>
-                      <p className="text-[10px] uppercase tracking-[0.12em] text-slate-400">{item.reference || 'manual'}</p>
+                    </div>
+                    <div className="grid shrink-0 grid-cols-2 gap-3 text-right">
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Debit</p>
+                        <p className="font-mono text-sm font-semibold text-red-600">
+                          {Number(item.debit || 0) > 0 ? formatCurrency(Number(item.debit)) : '—'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Credit</p>
+                        <p className="font-mono text-sm font-semibold text-emerald-600">
+                          {Number(item.credit || 0) > 0 ? formatCurrency(Number(item.credit)) : '—'}
+                        </p>
+                      </div>
                     </div>
                   </div>
                 </div>

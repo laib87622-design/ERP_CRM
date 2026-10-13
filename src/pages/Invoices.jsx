@@ -6,6 +6,7 @@ import { formatCurrency } from '../lib/currency';
 import { openInvoicePdf } from '../lib/invoicePdf';
 import { isDuplicateInvoicePayment } from '../lib/financialAudit';
 import { calculateCommissionAmount, fetchAgencySettings, getCommissionRuleForType, slugifyCommissionTypeKey } from '../lib/agencySettings';
+import { useFinancialPasswordConfirmation } from '../components/useFinancialPasswordConfirmation';
 import exportToCSV from '../utils/exportToCSV';
 
 const statusStyles = {
@@ -122,6 +123,7 @@ const getInvoicePayerOptions = (invoice, clientLookup = {}) => {
 };
 
 export default function Invoices({ language = 'en' }) {
+  const confirmAction = useFinancialPasswordConfirmation();
   const translations = {
     en: {
       heading: 'Finance',
@@ -415,6 +417,9 @@ export default function Invoices({ language = 'en' }) {
       setError('Please enter a valid amount paid for the partial payment.');
       return;
     }
+
+    const isAuthorized = await confirmAction('invoice payment');
+    if (!isAuthorized) return;
 
     try {
       setIsProcessing(true);

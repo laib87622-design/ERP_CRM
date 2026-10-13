@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Eye, History, Search, X } from 'lucide-react';
+import { Eye, EyeOff, History, Search, X } from 'lucide-react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
-import { fetchAgencySettings, saveAgencySettings, defaultAgencySettings, slugifyCommissionTypeKey } from '../lib/agencySettings';
+import { defaultAgencySettings, slugifyCommissionTypeKey } from '../lib/agencySettings';
+import { useFinancialPasswordConfirmation } from '../components/useFinancialPasswordConfirmation';
 
 const fieldGroups = {
   en: {
@@ -116,7 +117,41 @@ const availableModules = [
   { id: 'settings', label: 'Admin Settings' },
 ];
 
+const AGENCY_SETTINGS_ROW_ID = '2bacb327-05a7-43a8-9f40-6d3dbfdbc046';
+
+const queueDueMonthlySalaries = async (supabaseClient, today = new Date()) => {
+  const payDay = today.getDate();
+  const salaryMonth = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-01`;
+  const { data: profiles, error: profilesError } = await supabaseClient
+    .from('profiles')
+    .select('id, full_name, role, base_salary, salary_pay_day')
+    .eq('role', 'sales_agent')
+    .eq('salary_pay_day', payDay);
+
+  if (profilesError) throw profilesError;
+
+  const dueRows = (profiles || [])
+    .filter((profile) => Number(profile.base_salary || 0) > 0)
+    .map((profile) => ({
+      agent_id: profile.id,
+      amount: Number(profile.base_salary),
+      status: 'READY_TO_PAY',
+      source_type: 'salary',
+      salary_month: salaryMonth,
+      notes: `Monthly salary - ${salaryMonth.slice(0, 7)}`,
+    }));
+
+  if (dueRows.length === 0) return;
+
+  const { error: upsertError } = await supabaseClient
+    .from('agent_commissions')
+    .upsert(dueRows, { onConflict: 'agent_id,salary_month', ignoreDuplicates: true });
+
+  if (upsertError) throw upsertError;
+};
+
 export default function AgencySettings({ language = 'en', activeSection = 'agency' }) {
+  const confirmAction = useFinancialPasswordConfirmation();
   const navigate = useNavigate();
   const { commissionId } = useParams();
   const t = fieldGroups[language] || fieldGroups.en;
@@ -284,6 +319,8 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
   const section = activeSection || 'agency';
   const [settings, setSettings] = useState(defaultAgencySettings);
   const [settingsId, setSettingsId] = useState(null);
+  const [showAdminPin, setShowAdminPin] = useState(false);
+  const [showSecureDeletePin, setShowSecureDeletePin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -340,8 +377,8 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
         const { data, error: settingsError } = await supabase
           .from('agency_settings')
           .select('*')
-          .limit(1)
-          .single();
+          .eq('id', AGENCY_SETTINGS_ROW_ID)
+          .maybeSingle();
 
         if (settingsError) {
           setSettings(defaultAgencySettings);
@@ -418,8 +455,8 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
         const { data, error: settingsError } = await supabase
           .from('agency_settings')
           .select('*')
-          .limit(1)
-          .single();
+          .eq('id', AGENCY_SETTINGS_ROW_ID)
+          .maybeSingle();
 
         if (!settingsError && data) {
           setSettingsId(data.id);
@@ -469,6 +506,13 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
       try {
         setCommissionPayoutsLoading(true);
 
+        try {
+          await queueDueMonthlySalaries(supabase);
+        } catch (salaryError) {
+          console.error('Unable to queue monthly salary payouts:', salaryError);
+          setError(salaryError.message || 'Unable to generate monthly salary payouts.');
+        }
+
         const [{ data: readyCommissionData, error: readyError }, { data: allStatusData, error: allStatusError }, { data: accountData, error: accountError }] = await Promise.all([
           supabase
             .from('agent_commissions')
@@ -503,10 +547,12 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
 
         const mapCommissionRow = (row) => ({
           ...row,
-          target_type: row.target_type || 'agent',
-          notes: row.notes || `Commission payout - ${row.agent_id || 'agent'}`,
+          target_type: row.source_type === 'salary' ? 'salary' : (row.target_type || 'agent'),
+          notes: row.notes || (row.source_type === 'salary' ? `Monthly salary - ${row.salary_month || ''}` : `Commission payout - ${row.agent_id || 'agent'}`),
           agent_name: agentNameMap[row.agent_id] || 'Unknown Agent',
-          invoice_reference: row.invoices?.reference || row.invoices?.invoice_number || 'N/A',
+          invoice_reference: row.source_type === 'salary'
+            ? `Salary ${String(row.salary_month || '').slice(0, 7)}`
+            : row.invoices?.reference || row.invoices?.invoice_number || 'N/A',
           account_label: '—',
         });
         const normalizedReadyRows = (readyCommissionData || []).map(mapCommissionRow);
@@ -516,7 +562,7 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
         const { data: bankRows } = await supabase
           .from('bank_entries')
           .select('id, account_id, description, debit, credit, operation_date, agent_id')
-          .eq('operation_type', 'commission')
+          .in('operation_type', ['commission', 'payroll'])
           .order('operation_date', { ascending: false });
 
         const accountIds = [...new Set((bankRows || []).map((entry) => entry.account_id).filter(Boolean))];
@@ -545,7 +591,9 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
           const paymentAmount = Number(matchingEntry?.debit || matchingEntry?.credit || row.amount || 0);
           const joinedAgentName = row.agent_name || 'Unknown Agent';
           const joinedInvoiceNumber = row.invoice_reference || 'N/A';
-          const invoiceLabel = normalizeInvoiceReference(joinedInvoiceNumber === 'N/A' ? 'Manual commission' : `INV-${joinedInvoiceNumber}`);
+          const invoiceLabel = row.source_type === 'salary'
+            ? `Salary ${String(row.salary_month || '').slice(0, 7)}`
+            : normalizeInvoiceReference(joinedInvoiceNumber === 'N/A' ? 'Manual commission' : `INV-${joinedInvoiceNumber}`);
           const paymentAccount = matchingEntry ? accountMatchMap[matchingEntry.id] || 'Account' : '—';
 
           return {
@@ -696,7 +744,7 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
       const matchesFilter =
         commissionPayoutFilter === 'all' ||
         (commissionPayoutFilter === 'paid' && status === 'paid') ||
-        (commissionPayoutFilter === 'pending' && status === 'pending') ||
+        (commissionPayoutFilter === 'pending' && ['pending', 'ready_to_pay', 'pending_payment'].includes(status)) ||
         (commissionPayoutFilter === 'cancelled' && status === 'cancelled');
 
       const matchesQuery =
@@ -905,6 +953,9 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
       return;
     }
 
+    const isAuthorized = await confirmAction('commission payout');
+    if (!isAuthorized) return;
+
     setIsProcessing(true);
 
     try {
@@ -926,13 +977,14 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
       }
 
       const { data: userData } = await supabase.auth.getUser();
+      const operationType = commissionRow.source_type === 'salary' ? 'payroll' : 'commission';
 
       const { error: ledgerError } = await supabase.from('bank_entries').insert([
         {
           account_id: normalizeUuidValue(selectedAccountId),
           operation_date: new Date().toISOString(),
           description: commissionRow.notes || `Commission payout - ${commissionRow.target_type || 'agent'}`,
-          operation_type: 'commission',
+          operation_type: operationType,
           third_party: commissionRow.third_party || 'Agent commission',
           debit: amount,
           credit: 0,
@@ -1022,7 +1074,7 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
           ...settings,
           updated_at: new Date().toISOString(),
         })
-        .eq('id', settingsId);
+        .eq('id', AGENCY_SETTINGS_ROW_ID);
 
       if (updateError) throw updateError;
 
@@ -1250,6 +1302,36 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
                   />
                 </label>
               ))}
+              <label className="block text-sm text-brand-navy">
+                <span className="mb-1 block font-medium">Admin PIN</span>
+                <span className="relative block">
+                  <input
+                    type={showAdminPin ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    value={settings.admin_pin || ''}
+                    onChange={(event) => updateField('admin_pin', event.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 pr-11 outline-none focus:border-brand-gold"
+                  />
+                  <button type="button" onClick={() => setShowAdminPin((visible) => !visible)} aria-label={showAdminPin ? 'Hide admin PIN' : 'Show admin PIN'} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-brand-navy">
+                    {showAdminPin ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </span>
+              </label>
+              <label className="block text-sm text-brand-navy">
+                <span className="mb-1 block font-medium">Secure Delete PIN</span>
+                <span className="relative block">
+                  <input
+                    type={showSecureDeletePin ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    value={settings.secure_delete_pin || ''}
+                    onChange={(event) => updateField('secure_delete_pin', event.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 pr-11 outline-none focus:border-brand-gold"
+                  />
+                  <button type="button" onClick={() => setShowSecureDeletePin((visible) => !visible)} aria-label={showSecureDeletePin ? 'Hide secure delete PIN' : 'Show secure delete PIN'} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-brand-navy">
+                    {showSecureDeletePin ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </span>
+              </label>
             </div>
           </div>
 
@@ -1283,6 +1365,46 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
                   />
                 </label>
               ))}
+            </div>
+            <div className="mt-6 border-t border-slate-200 pt-5">
+              <div className="mb-3">
+                <h4 className="text-sm font-semibold text-brand-navy">Security PINs</h4>
+                <p className="mt-1 text-xs text-slate-500">PINs are masked by default. Changes save with the agency settings.</p>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="block text-sm text-brand-navy">
+                  <span className="mb-1 block font-medium">Admin PIN</span>
+                  <span className="relative block">
+                    <input
+                      type={showAdminPin ? 'text' : 'password'}
+                      inputMode="numeric"
+                      autoComplete="new-password"
+                      value={settings.admin_pin || ''}
+                      onChange={(event) => updateField('admin_pin', event.target.value)}
+                      className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 pr-11 outline-none focus:border-brand-gold"
+                    />
+                    <button type="button" onClick={() => setShowAdminPin((visible) => !visible)} aria-label={showAdminPin ? 'Hide admin PIN' : 'Show admin PIN'} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-brand-navy">
+                      {showAdminPin ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </span>
+                </label>
+                <label className="block text-sm text-brand-navy">
+                  <span className="mb-1 block font-medium">Secure Delete PIN</span>
+                  <span className="relative block">
+                    <input
+                      type={showSecureDeletePin ? 'text' : 'password'}
+                      inputMode="numeric"
+                      autoComplete="new-password"
+                      value={settings.secure_delete_pin || ''}
+                      onChange={(event) => updateField('secure_delete_pin', event.target.value)}
+                      className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 pr-11 outline-none focus:border-brand-gold"
+                    />
+                    <button type="button" onClick={() => setShowSecureDeletePin((visible) => !visible)} aria-label={showSecureDeletePin ? 'Hide secure delete PIN' : 'Show secure delete PIN'} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-brand-navy">
+                      {showSecureDeletePin ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
+                  </span>
+                </label>
+              </div>
             </div>
           </div>
 
@@ -1478,7 +1600,7 @@ export default function AgencySettings({ language = 'en', activeSection = 'agenc
                       <div>
                         <div className="flex items-center gap-2">
                           <h4 className="font-semibold text-brand-navy">{row.notes || row.target_type || 'Commission payout'}</h4>
-                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${payoutStatus === 'paid' ? 'bg-emerald-100 text-emerald-700' : payoutStatus === 'pending' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
+                          <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${payoutStatus === 'paid' || payoutStatus === 'ready_to_pay' ? 'bg-emerald-100 text-emerald-700' : payoutStatus === 'pending' || payoutStatus === 'pending_payment' ? 'bg-amber-100 text-amber-700' : 'bg-red-100 text-red-700'}`}>
                             {row.status}
                           </span>
                         </div>

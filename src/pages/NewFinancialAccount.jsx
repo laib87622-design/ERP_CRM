@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Building2, Landmark, Plus, Save } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { useFinancialPasswordConfirmation } from '../components/useFinancialPasswordConfirmation';
 
 const paymentMethodOptions = ['Cash', 'Bank Transfer', 'CCP', 'Credit Card', 'BaridiMob'];
 
@@ -18,6 +19,7 @@ const defaultForm = {
 };
 
 export default function NewFinancialAccount() {
+  const confirmAction = useFinancialPasswordConfirmation();
   const navigate = useNavigate();
   const [form, setForm] = useState(defaultForm);
   const [saving, setSaving] = useState(false);
@@ -61,6 +63,9 @@ export default function NewFinancialAccount() {
       setError('Initial balance must be a valid number.');
       return;
     }
+
+    const isAuthorized = await confirmAction('financial account creation and initial balance');
+    if (!isAuthorized) return;
 
     try {
       setSaving(true);

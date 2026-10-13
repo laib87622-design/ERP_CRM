@@ -3,29 +3,25 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
-  Clock3,
+  EllipsisVertical,
   Info,
   Luggage,
-  MapPin,
   Plane,
   Plus,
-  ShieldCheck,
+  Search,
   Tag,
   Trash2,
   X,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { formatRefreshFailureMessage } from '../lib/templateWorkflow';
-import {
-  downloadBrochureLink,
-  generateHotelPromotionBrochurePdf,
-  generateTripBrochurePdf,
-  withCacheBust,
-} from '../lib/brochurePdf';
-import { generateHajjOmraBrochurePdf } from '../lib/hajjOmraBrochure';
 import FlightItineraryBuilder from '../components/FlightItineraryBuilder';
 import HotelPromotionBuilder from '../components/HotelPromotionBuilder';
 import TicketViewModal from '../components/modals/TicketViewModal';
+import SecureDeleteModal from '../components/ui/SecureDeleteModal';
+import TripBrochure from '../components/TripBrochure';
+import HajjOmraBrochure from '../components/HajjOmraBrochure';
+import HotelPromotionBrochure from '../components/HotelPromotionBrochure';
 
 const mealTypeOptions = ['Petit Déjeuner', 'Demi-Pension', 'Pension Complète', 'All Inclusive Soft'];
 const defaultCountryOptions = ['Turkey', 'Tunisia', 'Egypt', 'Algeria', 'France', 'United Arab Emirates', 'Qatar', 'Saudi Arabia'];
@@ -45,6 +41,9 @@ const createTravelDate = (index = 0) => ({
   departure_time: '',
   return_date: '',
   return_time: '',
+  destination: '',
+  departure_point: '',
+  transport: '',
   prix_single: '',
   prix_double: '',
   prix_triple: '',
@@ -170,7 +169,7 @@ const createEmptyHotel = (travelDateId = null, travelDateLabel = getTravelDateLa
   assigned_nights_dates: '',
   is_primary: true,
   replacement_for_hotel_id: null,
-  meals: false,
+  meals: true,
   meal_type: 'Petit Déjeuner',
   prix_single: '',
   prix_double: '',
@@ -237,6 +236,8 @@ const createPackageDraft = (packageType = 'trip') => ({
   label: packageType === 'ticket_promotion' ? 'Ticket Promotion' : (packageType === 'hotel_promotion' ? 'Hotel Promotion' : ''),
   stock: '',
   service_ref: '',
+  supplier_id: '',
+  supplier_drive_link: '',
   country: ['hajj', 'omra'].includes(packageType) ? 'Saudi Arabia' : (packageType === 'ticket_promotion' ? 'Algeria' : (packageType === 'hotel_promotion' ? 'Algeria' : '')),
   destination: '',
   location: packageType === 'ticket_promotion' ? 'Airport' : (packageType === 'hotel_promotion' ? 'Hotel' : 'Mecca'),
@@ -287,6 +288,28 @@ const parseJsonArray = (value) => {
     }
   }
   return [];
+};
+
+const getTemplateTravelDates = (template) => {
+  const travelDates = parseJsonArray(template?.travel_dates);
+  return travelDates.length ? travelDates : parseJsonArray(template?.travel_schedule);
+};
+
+const isHotelPromotionTemplate = (template) => (
+  String(template?.template_type || '').toLowerCase() === 'hotel_promotion'
+  || String(template?.service_ref || '').trim().toLowerCase() === 'hotel'
+);
+
+const getTemplateTravelDate = (template, field) =>
+  getTemplateTravelDates(template).find((travel) => travel?.[field])?.[field] || template?.[field] || '';
+
+const formatPackageDate = (value) => {
+  if (!value) return '';
+  const normalizedValue = /^\d{4}-\d{2}-\d{2}$/.test(String(value)) ? `${value}T00:00:00` : value;
+  const date = new Date(normalizedValue);
+  return Number.isNaN(date.getTime())
+    ? value
+    : new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(date);
 };
 
 const parseJsonObject = (value, fallback = {}) => {
@@ -556,9 +579,18 @@ const resolvePackagePhotoList = (value) => {
     .filter(Boolean);
 };
 
-const normalizeTravelSchedule = (travelSchedule) => {
+const normalizePilgrimageDestination = (value) => ['جدة', 'المدينة'].includes(String(value || '').trim())
+  ? String(value).trim()
+  : '';
+
+const normalizeTravelSchedule = (travelSchedule, legacyFields = {}, isPilgrimagePackage = false) => {
   const items = parseJsonArray(travelSchedule);
-  if (!items.length) return [createTravelDate(0)];
+  if (!items.length) return [{
+    ...createTravelDate(0),
+    destination: isPilgrimagePackage ? normalizePilgrimageDestination(legacyFields.destination) : (legacyFields.destination || ''),
+    departure_point: legacyFields.departure_point || '',
+    transport: legacyFields.transport || '',
+  }];
 
   return items.map((item, index) => ({
     id: item.id || `travel-${Date.now()}-${Math.random()}`,
@@ -567,6 +599,11 @@ const normalizeTravelSchedule = (travelSchedule) => {
     departure_time: item.departure_time || '',
     return_date: item.return_date || '',
     return_time: item.return_time || '',
+    destination: isPilgrimagePackage
+      ? normalizePilgrimageDestination(item.destination || (index === 0 ? legacyFields.destination : ''))
+      : (item.destination || (index === 0 ? legacyFields.destination : '') || ''),
+    departure_point: item.departure_point || (index === 0 ? legacyFields.departure_point : '') || '',
+    transport: item.transport || (index === 0 ? legacyFields.transport : '') || '',
     prix_single: item.prix_single ?? '',
     prix_double: item.prix_double ?? '',
     prix_triple: item.prix_triple ?? '',
@@ -657,6 +694,8 @@ const normalizeTripTemplate = (row) => {
     type: row.type || 'national',
     label: row.label || '',
     service_ref: row.service_ref || '',
+    supplier_id: row.supplier_id || '',
+    supplier_drive_link: row.supplier_drive_link || '',
     country: ['hajj', 'omra'].includes(packageType) ? 'Saudi Arabia' : (row.country || ''),
     destination: row.destination || '',
     location: row.location || row.hotel_location || 'Mecca',
@@ -673,7 +712,11 @@ const normalizeTripTemplate = (row) => {
     include_itinerary: Boolean(row?.plan_de_vol?.trim()) || Boolean(row?.include_itinerary),
     plan_de_vol: row.plan_de_vol || '',
     itinerary_days: normalizeItineraryDays(row?.plan_de_vol || row?.itinerary_days),
-    travel_schedule: normalizeTravelSchedule(parsedTravelSchedule),
+    travel_schedule: normalizeTravelSchedule(parsedTravelSchedule, {
+      destination: row.destination || '',
+      departure_point: row.departure_point || '',
+      transport: row.transport || '',
+    }, ['hajj', 'omra'].includes(packageType)),
     hotels: normalizeHotels(parsedHotels, parsedTravelSchedule),
     photos: resolvePackagePhotoList(row?.photos),
     inclusions: normalizeListEntries(parsedInclusions),
@@ -694,7 +737,16 @@ export default function Packages({ language = 'en' }) {
   const [role, setRole] = useState('viewer');
   const [templates, setTemplates] = useState([]);
   const [serviceTypes, setServiceTypes] = useState([]);
+  const [suppliers, setSuppliers] = useState([]);
   const [selectedType, setSelectedType] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedMonth, setSelectedMonth] = useState('ALL');
+  const [selectedCountry, setSelectedCountry] = useState('ALL');
+  const [selectedAirline, setSelectedAirline] = useState('ALL');
+  const [selectedTicketDestination, setSelectedTicketDestination] = useState('ALL');
+  const [availabilityFilter, setAvailabilityFilter] = useState('ALL');
+  const [openActionId, setOpenActionId] = useState(null);
+  const [deletePackageTarget, setDeletePackageTarget] = useState(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [step, setStep] = useState(1);
@@ -707,6 +759,7 @@ export default function Packages({ language = 'en' }) {
   const [toast, setToast] = useState('');
   const [loading, setLoading] = useState(true);
   const [generatingBrochureId, setGeneratingBrochureId] = useState(null);
+  const [selectedPkgForPdf, setSelectedPkgForPdf] = useState(null);
   const [detailsModalOpen, setDetailsModalOpen] = useState(false);
   const [ticketViewModalOpen, setTicketViewModalOpen] = useState(false);
   const [selectedPackageDetails, setSelectedPackageDetails] = useState(null);
@@ -714,10 +767,6 @@ export default function Packages({ language = 'en' }) {
   const [statsModalOpen, setStatsModalOpen] = useState(false);
   const [statsLoading, setStatsLoading] = useState(false);
   const [statsPackage, setStatsPackage] = useState(null);
-  const [brochurePickerOpen, setBrochurePickerOpen] = useState(false);
-  const [brochurePickerTemplate, setBrochurePickerTemplate] = useState(null);
-  const [brochurePickerPhotos, setBrochurePickerPhotos] = useState([]);
-  const [selectedBrochurePhoto, setSelectedBrochurePhoto] = useState('');
   const [statsData, setStatsData] = useState({
     timesSold: 0,
     totalRevenue: 0,
@@ -857,14 +906,16 @@ export default function Packages({ language = 'en' }) {
       if (!supabase) {
         setTemplates([]);
         setServiceTypes([]);
+        setSuppliers([]);
         setLoading(false);
         return;
       }
 
       try {
-        const [templatesRes, serviceTypesRes] = await Promise.all([
+        const [templatesRes, serviceTypesRes, suppliersRes] = await Promise.all([
           supabase.from('package_templates').select('*').order('created_at', { ascending: false }),
           supabase.from('service_types').select('id, name').order('name', { ascending: true }),
+          supabase.from('suppliers').select('id, name').order('name', { ascending: true }),
         ]);
 
         if (templatesRes.error) {
@@ -881,10 +932,18 @@ export default function Packages({ language = 'en' }) {
         } else {
           setServiceTypes(serviceTypesRes.data || []);
         }
+
+        if (suppliersRes.error) {
+          console.warn('suppliers unavailable:', suppliersRes.error.message || suppliersRes.error);
+          setSuppliers([]);
+        } else {
+          setSuppliers(suppliersRes.data || []);
+        }
       } catch (error) {
         console.warn('Unable to load package templates or service types:', error);
         setTemplates([]);
         setServiceTypes([]);
+        setSuppliers([]);
       } finally {
         setLoading(false);
       }
@@ -905,6 +964,106 @@ export default function Packages({ language = 'en' }) {
     () => templates.filter((template) => (template.template_type || 'trip') === selectedType),
     [templates, selectedType]
   );
+
+  const isTicketPromotionView = selectedType === 'ticket_promotion'
+    || (activeTemplates.length > 0 && activeTemplates.every((template) => template.template_type === 'ticket_promotion'));
+
+  const monthOptions = useMemo(() => {
+    const months = [...new Set(activeTemplates.flatMap((template) => {
+      if (isHotelPromotionTemplate(template)) {
+        const hotelDetails = parseJsonObject(template.hotel_details);
+        return [String(hotelDetails.start_date || '').slice(0, 7)];
+      }
+      if (isTicketPromotionView) {
+        const flightDetails = normalizeTicketFlightDetails(template.flight_details);
+        const departureValues = [
+          flightDetails.outbound?.journey?.departure_time,
+          ...flightDetails.multi_city_legs.map((leg) => leg.departure),
+        ];
+        return departureValues.map((date) => String(date || '').slice(0, 7));
+      }
+      const travelDates = getTemplateTravelDates(template);
+      const dates = travelDates.length ? travelDates : [{ departure_date: template.departure_date }];
+      return dates.map((travel) => String(travel.departure_date || '').slice(0, 7));
+    }).filter((month) => /^\d{4}-\d{2}$/.test(month)))];
+
+    return months.sort().map((month) => ({
+      value: month,
+      label: new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(new Date(`${month}-01T00:00:00`)),
+    }));
+  }, [activeTemplates, isTicketPromotionView]);
+
+  const countryFilterOptions = useMemo(() => [...new Set(activeTemplates.map((template) => {
+    const hotelDetails = parseJsonObject(template.hotel_details);
+    return String((isHotelPromotionTemplate(template) && hotelDetails.country) || template.country || '').trim();
+  }).filter(Boolean))].sort(), [activeTemplates]);
+
+  const ticketFilterOptions = useMemo(() => {
+    const airlines = new Set();
+    const destinations = new Set();
+
+    activeTemplates.forEach((template) => {
+      const flightDetails = normalizeTicketFlightDetails(template.flight_details);
+      [
+        flightDetails.outbound?.journey,
+        flightDetails.return?.journey,
+        ...flightDetails.multi_city_legs,
+      ].filter(Boolean).forEach((journey) => {
+        const airline = String(journey.airline || '').trim();
+        const destination = String(journey.end_airport || journey.end || '').trim();
+        if (airline) airlines.add(airline);
+        if (destination) destinations.add(destination);
+      });
+    });
+
+    return {
+      airlines: [...airlines].sort(),
+      destinations: [...destinations].sort(),
+    };
+  }, [activeTemplates]);
+
+  const filteredTemplates = useMemo(() => {
+    const query = searchQuery.trim().toLocaleLowerCase();
+
+    return activeTemplates.filter((template) => {
+      const hotelDetails = parseJsonObject(template.hotel_details);
+      const isHotelPromotion = isHotelPromotionTemplate(template);
+      const flightDetails = isTicketPromotionView ? normalizeTicketFlightDetails(template.flight_details) : null;
+      const travelDates = getTemplateTravelDates(template);
+      const searchableLegValues = travelDates.flatMap((travel) => [travel.destination, travel.departure_point, travel.transport]);
+      const ticketJourneys = flightDetails ? [
+        flightDetails.outbound?.journey,
+        flightDetails.return?.journey,
+        ...flightDetails.multi_city_legs,
+      ].filter(Boolean) : [];
+      const matchesQuery = !query || [
+        template.country,
+        template.destination,
+        template.location,
+        template.label,
+        ...searchableLegValues,
+        ...(isHotelPromotion ? [hotelDetails.country, hotelDetails.province, hotelDetails.hotel_name] : []),
+        ...ticketJourneys.flatMap((journey) => [journey.airline, journey.start_airport || journey.start, journey.end_airport || journey.end]),
+      ]
+        .some((value) => String(value || '').toLocaleLowerCase().includes(query));
+      const filterDates = isTicketPromotionView
+        ? [flightDetails.outbound?.journey?.departure_time, ...flightDetails.multi_city_legs.map((leg) => leg.departure)]
+        : isHotelPromotion
+        ? [hotelDetails.start_date]
+        : travelDates.length ? travelDates.map((travel) => travel.departure_date) : [template.departure_date];
+      const matchesMonth = selectedMonth === 'ALL' || filterDates.some((date) => String(date || '').slice(0, 7) === selectedMonth);
+      const rowCountry = isHotelPromotion ? (hotelDetails.country || template.country) : template.country;
+      const matchesCountry = isTicketPromotionView || selectedCountry === 'ALL' || rowCountry === selectedCountry;
+      const matchesAirline = !isTicketPromotionView || selectedAirline === 'ALL'
+        || ticketJourneys.some((journey) => journey.airline === selectedAirline);
+      const matchesTicketDestination = !isTicketPromotionView || selectedTicketDestination === 'ALL'
+        || ticketJourneys.some((journey) => (journey.end_airport || journey.end) === selectedTicketDestination);
+      const isAvailable = template.is_available !== false;
+      const matchesAvailability = availabilityFilter === 'ALL'
+        || (availabilityFilter === 'AVAILABLE' ? isAvailable : !isAvailable);
+      return matchesQuery && matchesMonth && matchesCountry && matchesAirline && matchesTicketDestination && matchesAvailability;
+    });
+  }, [activeTemplates, searchQuery, selectedMonth, selectedCountry, selectedAirline, selectedTicketDestination, availabilityFilter, isTicketPromotionView]);
 
   const openCreate = () => {
     if (!canWrite) {
@@ -932,6 +1091,20 @@ export default function Packages({ language = 'en' }) {
     setActiveTab('Basic Info');
     setShowCountryInput(Boolean(!item.country || !countryOptions.includes(item.country)));
     setIsFormOpen(true);
+  };
+
+  const handleDeletePackage = async (packageId) => {
+    try {
+      const { error } = await supabase.from('package_templates').delete().eq('id', packageId);
+      if (error) throw error;
+
+      setTemplates((previous) => previous.filter((template) => template.id !== packageId));
+      setToast(language === 'en' ? 'Package deleted successfully.' : 'تم حذف الباقة بنجاح.');
+    } catch (error) {
+      setToast(error?.message || (language === 'en' ? 'Failed to delete package.' : 'تعذر حذف الباقة.'));
+    } finally {
+      setDeletePackageTarget(null);
+    }
   };
 
   const openPackageDetails = (item) => {
@@ -1114,90 +1287,35 @@ export default function Packages({ language = 'en' }) {
     });
   };
 
-  const handleGenerateBrochure = (template) => {
-    if (!template?.id) {
-      setToast(language === 'en' ? 'Save the template before generating a brochure.' : 'احفظ القالب قبل إنشاء الكتيب.');
-      return;
+  const generatePDF = async (packageData) => {
+    if (!packageData || generatingBrochureId !== null) return;
+    setGeneratingBrochureId(packageData.id);
+    let brochurePackage = packageData;
+
+    if (['hajj', 'omra', 'hotel_promotion'].includes(String(packageData.template_type || '').toLowerCase()) && supabase) {
+      try {
+        const { data, error } = await supabase
+          .from('agency_settings')
+          .select('agency_name, address, city, wilaya, phone, email')
+          .eq('id', '2bacb327-05a7-43a8-9f40-6d3dbfdbc046')
+          .maybeSingle();
+
+        if (error) throw error;
+        if (data) brochurePackage = { ...packageData, agencySettings: data };
+      } catch (error) {
+        console.warn('Unable to load brochure agency settings:', error?.message || error);
+      }
     }
 
-    const photos = resolvePackagePhotoList(template.photos);
-    setBrochurePickerTemplate(template);
-    setBrochurePickerPhotos(photos);
-    setSelectedBrochurePhoto(photos[0] || '');
-    setBrochurePickerOpen(true);
-  };
+    setSelectedPkgForPdf(brochurePackage);
 
-  const handleLocalBrochureUpload = (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = String(reader.result || '');
-      if (!dataUrl) return;
-
-      setBrochurePickerPhotos((prev) => {
-        const next = [...prev, dataUrl];
-        setSelectedBrochurePhoto(dataUrl);
-        return next;
-      });
-    };
-    reader.readAsDataURL(file);
-    event.target.value = '';
-  };
-
-  const handleRemoveSelectedBrochurePhoto = () => {
-    if (!selectedBrochurePhoto) return;
-
-    setBrochurePickerPhotos((prev) => {
-      const next = prev.filter((photo) => photo !== selectedBrochurePhoto);
-      setSelectedBrochurePhoto(next[0] || '');
-      return next;
-    });
-  };
-
-  const confirmBrochureGeneration = async () => {
-    if (!brochurePickerTemplate) return;
-
-    setGeneratingBrochureId(brochurePickerTemplate.id);
-    setBrochurePickerOpen(false);
-
-    try {
-      const templateKind = brochurePickerTemplate.template_type || 'trip';
-      const generator = templateKind === 'hotel_promotion'
-        ? generateHotelPromotionBrochurePdf
-        : ['hajj', 'omra'].includes(templateKind)
-          ? generateHajjOmraBrochurePdf
-          : generateTripBrochurePdf;
-      const result = await generator(
-        { ...brochurePickerTemplate, photos: brochurePickerPhotos },
-        selectedBrochurePhoto || brochurePickerPhotos[0] || null
-      );
-
-      setTemplates((prev) =>
-        prev.map((item) => (item.id === brochurePickerTemplate.id ? { ...item, brochure_url: result.publicUrl, photos: brochurePickerPhotos } : item))
-      );
-
-      setToast(language === 'en' ? 'Brochure generated and saved.' : 'تم إنشاء الكتيب وحفظه.');
-    } catch (error) {
-      setToast(error?.message || 'Unable to generate brochure.');
-    } finally {
-      setGeneratingBrochureId(null);
-    }
-  };
-
-  const handleCopyBrochureLink = async (url) => {
-    if (!url) {
-      setToast(language === 'en' ? 'No brochure link available yet.' : 'لا يوجد رابط كتيب بعد.');
-      return;
-    }
-
-    try {
-      await navigator.clipboard.writeText(withCacheBust(url, Date.now()));
-      setToast(language === 'en' ? 'Brochure link copied.' : 'تم نسخ رابط الكتيب.');
-    } catch {
-      setToast(language === 'en' ? 'Copy failed. You can still download the brochure.' : 'فشل النسخ. يمكنك تنزيل الكتيب يدوياً.');
-    }
+    window.setTimeout(() => {
+      window.print();
+      window.setTimeout(() => {
+        setSelectedPkgForPdf(null);
+        setGeneratingBrochureId(null);
+      }, 500);
+    }, 100);
   };
 
   const handleOpenStats = async (item) => {
@@ -1296,6 +1414,7 @@ export default function Packages({ language = 'en' }) {
     const travelDates = syncTravelDateLabels(
       (draft.travel_schedule || []).filter(
         (item) => item.departure_date || item.return_date || item.departure_time || item.return_time
+          || item.destination || item.departure_point || item.transport
       )
     );
     const normalizedHotels = (draft.hotels || []).map((hotel, index) => {
@@ -1319,15 +1438,17 @@ export default function Packages({ language = 'en' }) {
       type: isTicketPromotionPackage ? 'national' : (draft.type || 'national'),
       label: draft.label.trim(),
       service_ref: draft.service_ref?.trim() || '',
+      supplier_id: draft.supplier_id || null,
+      supplier_drive_link: draft.supplier_drive_link?.trim() || '',
       country: isTicketPromotionPackage ? 'Algeria' : draft.country.trim(),
-      destination: isTicketPromotionPackage ? (draft.destination?.trim() || 'Algiers') : (draft.destination?.trim() || ''),
+      destination: isTicketPromotionPackage ? (draft.destination?.trim() || 'Algiers') : (firstTravel.destination?.trim() || ''),
       location: isTicketPromotionPackage ? 'Airport' : (draft.location?.trim() || ''),
       distance_from_haram: isTicketPromotionPackage ? null : (draft.distance_from_haram === '' ? null : Number(draft.distance_from_haram) || null),
       departure_date: isTicketPromotionPackage ? null : (firstTravel.departure_date || draft.departure_date || null),
       return_date: isTicketPromotionPackage ? null : (firstTravel.return_date || draft.return_date || null),
       duration_nights: isTicketPromotionPackage ? null : (draft.duration_nights === '' ? null : Number(draft.duration_nights) || null),
-      departure_point: isTicketPromotionPackage ? 'Algiers Airport' : (draft.departure_point?.trim() || ''),
-      transport: isTicketPromotionPackage ? 'Flight' : (draft.transport?.trim() || ''),
+      departure_point: isTicketPromotionPackage ? 'Algiers Airport' : (firstTravel.departure_point?.trim() || ''),
+      transport: isTicketPromotionPackage ? 'Flight' : (firstTravel.transport?.trim() || ''),
       plan_de_vol: isTicketPromotionPackage
         ? ''
         : (draft.include_itinerary
@@ -1352,7 +1473,7 @@ export default function Packages({ language = 'en' }) {
         assigned_nights_dates: hotel.assigned_nights_dates || '',
         is_primary: Boolean(hotel.is_primary),
         replacement_for_hotel_id: hotel.is_primary === false ? (hotel.replacement_for_hotel_id || null) : null,
-        meals: Boolean(hotel.meals),
+        meals: Boolean(hotel.meal_type),
         meal_type: hotel.meal_type || 'Petit Déjeuner',
         prix_single: hotel.prix_single ?? '',
         prix_double: hotel.prix_double ?? '',
@@ -1856,16 +1977,6 @@ export default function Packages({ language = 'en' }) {
       return renderHotelPromotionForm();
     }
 
-    const tabs = [
-      { key: 1, label: 'Basic' },
-      { key: 2, label: 'Travel' },
-      { key: 3, label: 'Hotels' },
-      { key: 4, label: 'Inclusions' },
-      { key: 5, label: 'Exclusions' },
-      { key: 6, label: 'Cancellation' },
-      { key: 7, label: 'Good to Know' },
-    ];
-
     if (step === 1) {
       return (
         <div className="space-y-4">
@@ -1960,55 +2071,6 @@ export default function Packages({ language = 'en' }) {
               )}
             </div>
 
-            <div className="md:col-span-2">
-              <label className="mb-1 block text-sm font-medium text-slate-700">Destination</label>
-              <input
-                value={draft.destination}
-                onChange={(event) => setDraft((prev) => ({ ...prev, destination: event.target.value }))}
-                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-[#c9a84c]"
-              />
-            </div>
-          </div>
-
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <label className="text-sm font-medium text-slate-700">Brochure Photos</label>
-              <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-[#0a1120] px-3 py-2 text-xs font-semibold text-white">
-                <Plus size={14} />
-                Add image
-                <input type="file" accept="image/*" className="hidden" onChange={(event) => {
-                  const file = event.target.files?.[0];
-                  if (!file) return;
-                  const reader = new FileReader();
-                  reader.onload = () => {
-                    const uploadedUrl = String(reader.result || '');
-                    if (!uploadedUrl) return;
-                    setDraft((prev) => ({ ...prev, photos: [...(prev.photos || []), uploadedUrl] }));
-                  };
-                  reader.readAsDataURL(file);
-                  event.target.value = '';
-                }} />
-              </label>
-            </div>
-
-            {(!draft.photos || draft.photos.length === 0) ? (
-              <p className="text-sm text-slate-500">No brochure images added yet.</p>
-            ) : (
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {draft.photos.map((photo, index) => (
-                  <div key={`${photo}-${index}`} className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                    <img src={photo} alt={`Brochure image ${index + 1}`} className="h-28 w-full object-cover" />
-                    <button
-                      type="button"
-                      onClick={() => setDraft((prev) => ({ ...prev, photos: prev.photos.filter((item) => item !== photo) }))}
-                      className="absolute right-2 top-2 rounded-full bg-slate-900/70 p-1.5 text-white"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
@@ -2129,6 +2191,57 @@ export default function Packages({ language = 'en' }) {
                     className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-[#c9a84c]"
                   />
                 </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Destination</label>
+                  {isPilgrimagePackage ? (
+                    <select
+                      value={travel.destination || ''}
+                      onChange={(event) => setDraft((prev) => ({
+                        ...prev,
+                        travel_schedule: prev.travel_schedule.map((item) => item.id === travel.id ? { ...item, destination: event.target.value } : item),
+                      }))}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-amber-500"
+                    >
+                      <option value="">اختر الوجهة...</option>
+                      <option value="جدة">جدة</option>
+                      <option value="المدينة">المدينة</option>
+                    </select>
+                  ) : (
+                    <input
+                      value={travel.destination || ''}
+                      onChange={(event) => setDraft((prev) => ({
+                        ...prev,
+                        travel_schedule: prev.travel_schedule.map((item) => item.id === travel.id ? { ...item, destination: event.target.value } : item),
+                      }))}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-[#c9a84c]"
+                    />
+                  )}
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Departure Point</label>
+                  <input
+                    value={travel.departure_point || ''}
+                    onChange={(event) => setDraft((prev) => ({
+                      ...prev,
+                      travel_schedule: prev.travel_schedule.map((item) => item.id === travel.id ? { ...item, departure_point: event.target.value } : item),
+                    }))}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-[#c9a84c]"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Transport</label>
+                  <input
+                    value={travel.transport || ''}
+                    onChange={(event) => setDraft((prev) => ({
+                      ...prev,
+                      travel_schedule: prev.travel_schedule.map((item) => item.id === travel.id ? { ...item, transport: event.target.value } : item),
+                    }))}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-[#c9a84c]"
+                  />
+                </div>
               </div>
             </div>
           ))}
@@ -2150,19 +2263,15 @@ export default function Packages({ language = 'en' }) {
 
           <div className="grid gap-4 md:grid-cols-2">
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Departure point</label>
+              <label htmlFor="package-duration-nights" className="mb-1 block text-sm font-medium text-slate-700">Duration (nights)</label>
               <input
-                value={draft.departure_point}
-                onChange={(event) => setDraft((prev) => ({ ...prev, departure_point: event.target.value }))}
-                className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-[#c9a84c]"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Transport</label>
-              <input
-                value={draft.transport}
-                onChange={(event) => setDraft((prev) => ({ ...prev, transport: event.target.value }))}
+                id="package-duration-nights"
+                type="number"
+                min="1"
+                step="1"
+                value={draft.duration_nights}
+                onChange={(event) => setDraft((prev) => ({ ...prev, duration_nights: event.target.value }))}
+                placeholder="e.g. 7"
                 className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-[#c9a84c]"
               />
             </div>
@@ -2317,33 +2426,13 @@ export default function Packages({ language = 'en' }) {
                   </div>
 
                   <div className="rounded-xl border border-slate-200 bg-white p-3">
-                    <label className="mb-2 block text-sm font-medium text-slate-700">Location</label>
-                    <div className="flex flex-wrap gap-3">
-                      <button
-                        type="button"
-                        onClick={() => setDraft((prev) => ({ ...prev, hotels: prev.hotels.map((item) => item.id === hotel.id ? { ...item, location: 'Mecca' } : item) }))}
-                        className={`rounded-xl border px-3 py-2 text-sm font-medium ${hotel.location === 'Mecca' ? 'border-brand-gold bg-brand-gold/10 text-brand-navy' : 'border-slate-200 bg-white text-slate-600'}`}
-                      >
-                        Mecca (مكة المكرمة)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setDraft((prev) => ({ ...prev, hotels: prev.hotels.map((item) => item.id === hotel.id ? { ...item, location: 'Medina' } : item) }))}
-                        className={`rounded-xl border px-3 py-2 text-sm font-medium ${hotel.location === 'Medina' ? 'border-brand-gold bg-brand-gold/10 text-brand-navy' : 'border-slate-200 bg-white text-slate-600'}`}
-                      >
-                        Medina (المدينة المنورة)
-                      </button>
-                    </div>
-
-                    <div className="mt-3">
-                      <label className="mb-1 block text-sm font-medium text-slate-700">Distance from Haram (البعد عن الحرم)</label>
-                      <input
-                        value={hotel.distance_from_haram}
-                        onChange={(event) => setDraft((prev) => ({ ...prev, hotels: prev.hotels.map((item) => item.id === hotel.id ? { ...item, distance_from_haram: event.target.value } : item) }))}
-                        placeholder="Example: 300m"
-                        className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-[#c9a84c]"
-                      />
-                    </div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">Distance from Haram (البعد عن الحرم)</label>
+                    <input
+                      value={hotel.distance_from_haram}
+                      onChange={(event) => setDraft((prev) => ({ ...prev, hotels: prev.hotels.map((item) => item.id === hotel.id ? { ...item, distance_from_haram: event.target.value } : item) }))}
+                      placeholder="Example: 300m"
+                      className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none focus:border-[#c9a84c]"
+                    />
                   </div>
 
                   <div className="rounded-xl border border-slate-200 bg-white p-3">
@@ -2403,7 +2492,7 @@ export default function Packages({ language = 'en' }) {
                         <button
                           key={option}
                           type="button"
-                          onClick={() => setDraft((prev) => ({ ...prev, hotels: prev.hotels.map((item) => item.id === hotel.id ? { ...item, meal_type: option } : item) }))}
+                          onClick={() => setDraft((prev) => ({ ...prev, hotels: prev.hotels.map((item) => item.id === hotel.id ? { ...item, meal_type: option, meals: true } : item) }))}
                           className={`rounded-xl border px-3 py-2 text-xs font-medium ${hotel.meal_type === option ? 'border-brand-gold bg-brand-gold/10 text-brand-navy' : 'border-slate-200 bg-white text-slate-600'}`}
                         >
                           {option}
@@ -2483,16 +2572,6 @@ export default function Packages({ language = 'en' }) {
                     </div>
                   </div>
 
-                  <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-3">
-                    <span className="text-sm font-medium text-slate-700">Meals included</span>
-                    <button
-                      type="button"
-                      onClick={() => setDraft((prev) => ({ ...prev, hotels: prev.hotels.map((item) => item.id === hotel.id ? { ...item, meals: !item.meals } : item) }))}
-                      className={`rounded-full px-3 py-1 text-xs font-semibold ${hotel.meals ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}
-                    >
-                      {hotel.meals ? 'Yes' : 'No'}
-                    </button>
-                  </div>
                 </div>
               </div>
             ))
@@ -2885,21 +2964,6 @@ export default function Packages({ language = 'en' }) {
                           />
                         </div>
 
-                        <div>
-                          <label className="mb-1 block text-sm font-medium text-slate-700">Meal Type</label>
-                          <div className="flex flex-wrap gap-2">
-                            {['Petit Déjeuner', 'Demi-Pension', 'Pension Complète', 'All Inclusive'].map((option) => (
-                              <button
-                                key={option}
-                                type="button"
-                                onClick={() => setDraft((prev) => ({ ...prev, hotels: prev.hotels.map((item) => item.id === hotel.id ? { ...item, meal_type: option } : item) }))}
-                                className={`rounded-xl border px-3 py-2 text-xs font-medium ${hotel.meal_type === option ? 'border-brand-gold bg-brand-gold/10 text-brand-navy' : 'border-slate-200 bg-white text-slate-600'}`}
-                              >
-                                {option}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
                       </div>
                     )}
 
@@ -2916,7 +2980,7 @@ export default function Packages({ language = 'en' }) {
                           <button
                             key={option}
                             type="button"
-                            onClick={() => setDraft((prev) => ({ ...prev, hotels: prev.hotels.map((item) => item.id === hotel.id ? { ...item, meal_type: option } : item) }))}
+                            onClick={() => setDraft((prev) => ({ ...prev, hotels: prev.hotels.map((item) => item.id === hotel.id ? { ...item, meal_type: option, meals: true } : item) }))}
                             className={`rounded-xl border px-3 py-2 text-xs font-medium ${hotel.meal_type === option ? 'border-brand-gold bg-brand-gold/10 text-brand-navy' : 'border-slate-200 bg-white text-slate-600'}`}
                           >
                             {option}
@@ -2925,16 +2989,6 @@ export default function Packages({ language = 'en' }) {
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-white p-3">
-                      <span className="text-sm font-medium text-slate-700">Meals included</span>
-                      <button
-                        type="button"
-                        onClick={() => setDraft((prev) => ({ ...prev, hotels: prev.hotels.map((item) => item.id === hotel.id ? { ...item, meals: !item.meals } : item) }))}
-                        className={`rounded-full px-3 py-1 text-xs font-semibold ${hotel.meals ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}
-                      >
-                        {hotel.meals ? 'Yes' : 'No'}
-                      </button>
-                    </div>
                   </div>
                 </div>
               ))}
@@ -2972,6 +3026,36 @@ export default function Packages({ language = 'en' }) {
 
     if (step === 4) {
       return (
+        <div className="space-y-4 p-1">
+          <div>
+            <label htmlFor="package-supplier" className="mb-1 block text-sm font-medium text-slate-700">Select Supplier</label>
+            <select
+              id="package-supplier"
+              value={draft.supplier_id || ''}
+              onChange={(event) => setDraft((prev) => ({ ...prev, supplier_id: event.target.value }))}
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
+            >
+              <option value="">Select a supplier...</option>
+              {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="supplier-drive-link" className="mb-1 block text-sm font-medium text-slate-700">Supplier Drive Link</label>
+            <input
+              id="supplier-drive-link"
+              type="url"
+              placeholder="https://drive.google.com/..."
+              value={draft.supplier_drive_link || ''}
+              onChange={(event) => setDraft((prev) => ({ ...prev, supplier_drive_link: event.target.value }))}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
+            />
+          </div>
+        </div>
+      );
+    }
+
+    if (step === 5) {
+      return (
         <div className="space-y-4">
           {draft.inclusions.map((item, index) => (
             <div key={item.id} className="flex gap-3">
@@ -3005,7 +3089,7 @@ export default function Packages({ language = 'en' }) {
       );
     }
 
-    if (step === 5) {
+    if (step === 6) {
       return (
         <div className="space-y-4">
           {draft.exclusions.map((item, index) => (
@@ -3040,7 +3124,7 @@ export default function Packages({ language = 'en' }) {
       );
     }
 
-    if (step === 6) {
+    if (step === 7) {
       return (
         <div>
           <label className="mb-2 block text-sm font-medium text-slate-700">Cancellation Policy</label>
@@ -3055,7 +3139,7 @@ export default function Packages({ language = 'en' }) {
       );
     }
 
-    if (step === 7) {
+    if (step === 8) {
       return (
         <div>
           <label className="mb-2 block text-sm font-medium text-slate-700">Good to Know</label>
@@ -3076,24 +3160,88 @@ export default function Packages({ language = 'en' }) {
   const pageTitle = language === 'en'
     ? `${packageTypeCards.find((card) => card.key === selectedType)?.label || 'Trip'} Packages`
     : `${packageTypeCards.find((card) => card.key === selectedType)?.labelAr || 'رحلة'} / باقات`;
+  const isHotelPromotionView = selectedType === 'hotel_promotion'
+    || (activeTemplates.length > 0 && activeTemplates.every(isHotelPromotionTemplate));
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-3xl bg-[#0a1120] p-5 text-white shadow-lg">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#c9a84c]">{language === 'en' ? 'Packages' : 'الباقات'}</p>
-            <h2 className="mt-2 font-serif text-3xl text-white">{language === 'en' ? 'Packages' : 'الباقات'}</h2>
+    <>
+      <div className="space-y-6 print:hidden">
+      {selectedType !== null && (
+        <div className="mb-6 flex flex-col items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm md:flex-row">
+          <div className="relative w-full flex-1">
+            <Search size={18} aria-hidden="true" className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder={isTicketPromotionView ? 'Search airline or airport...' : 'Search by destination or country...'}
+              aria-label={isTicketPromotionView ? 'Search ticket promotions by airline or airport' : 'Search packages by destination or country'}
+              className="w-full rounded-lg border border-slate-300 py-2 pl-10 pr-4 text-sm text-slate-800 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
+            />
           </div>
-
-          <div className="flex items-center gap-3">
-            <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-medium text-slate-100">
-              <ShieldCheck size={14} className="text-[#c9a84c]" />
-              {canWrite ? 'Super Admin + Sales Agent' : 'Viewer read-only'}
-            </span>
+          <div className="flex w-full flex-wrap gap-3 md:w-auto md:flex-nowrap">
+            {isTicketPromotionView ? (
+              <>
+                <select
+                  value={selectedAirline}
+                  onChange={(event) => setSelectedAirline(event.target.value)}
+                  aria-label="Filter ticket promotions by airline"
+                  className="min-w-[130px] flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 md:flex-none"
+                >
+                  <option value="ALL">All Airlines</option>
+                  {ticketFilterOptions.airlines.map((airline) => <option key={airline} value={airline}>{airline}</option>)}
+                </select>
+                <select
+                  value={selectedTicketDestination}
+                  onChange={(event) => setSelectedTicketDestination(event.target.value)}
+                  aria-label="Filter ticket promotions by destination airport"
+                  className="min-w-[130px] flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 md:flex-none"
+                >
+                  <option value="ALL">All Airports</option>
+                  {ticketFilterOptions.destinations.map((airport) => <option key={airport} value={airport}>{airport}</option>)}
+                </select>
+              </>
+            ) : (
+              <select
+                value={selectedCountry}
+                onChange={(event) => setSelectedCountry(event.target.value)}
+                aria-label="Filter packages by country"
+                className="min-w-[130px] flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 md:flex-none"
+              >
+                <option value="ALL">All Countries</option>
+                {countryFilterOptions.map((country) => <option key={country} value={country}>{country}</option>)}
+              </select>
+            )}
+            <select
+              value={selectedMonth}
+              onChange={(event) => setSelectedMonth(event.target.value)}
+              aria-label="Filter packages by departure month"
+              className="min-w-[130px] flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 md:flex-none"
+            >
+              <option value="ALL">All Months</option>
+              {monthOptions.map((month) => <option key={month.value} value={month.value}>{month.label}</option>)}
+            </select>
+            <select
+              value={availabilityFilter}
+              onChange={(event) => setAvailabilityFilter(event.target.value)}
+              aria-label="Filter packages by availability"
+              className="min-w-[130px] flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 md:flex-none"
+            >
+              <option value="ALL">All Statuses</option>
+              <option value="AVAILABLE">Available</option>
+              <option value="UNAVAILABLE">Unavailable</option>
+            </select>
+            <button
+              type="button"
+              disabled={!canWrite}
+              onClick={openCreate}
+              className="whitespace-nowrap rounded-lg bg-slate-900 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              + Create Package
+            </button>
           </div>
         </div>
-      </div>
+      )}
 
       {selectedType === null ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
@@ -3101,7 +3249,15 @@ export default function Packages({ language = 'en' }) {
             <button
               key={card.key}
               type="button"
-              onClick={() => setSelectedType(card.key)}
+              onClick={() => {
+                setSelectedType(card.key);
+                setSearchQuery('');
+                setSelectedMonth('ALL');
+                setSelectedCountry('ALL');
+                setSelectedAirline('ALL');
+                setSelectedTicketDestination('ALL');
+                setAvailabilityFilter('ALL');
+              }}
               className="group rounded-3xl border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-[#c9a84c]"
             >
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#fff7dd] text-2xl shadow-inner">
@@ -3126,7 +3282,15 @@ export default function Packages({ language = 'en' }) {
             <div className="flex items-center gap-3">
               <button
                 type="button"
-                onClick={() => setSelectedType(null)}
+                onClick={() => {
+                  setSelectedType(null);
+                  setSearchQuery('');
+                  setSelectedMonth('ALL');
+                  setSelectedCountry('ALL');
+                  setSelectedAirline('ALL');
+                  setSelectedTicketDestination('ALL');
+                  setAvailabilityFilter('ALL');
+                }}
                 className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-[#0a1120]"
               >
                 <ChevronLeft size={16} />
@@ -3139,355 +3303,336 @@ export default function Packages({ language = 'en' }) {
               </div>
             </div>
 
-            <button
-              type="button"
-              disabled={!canWrite}
-              onClick={openCreate}
-              className="rounded-xl bg-[#c9a84c] px-4 py-2.5 text-sm font-bold text-[#0a1120] disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              {language === 'en' ? '+ Create' : '+ إنشاء'}
-            </button>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {loading ? (
-              <div className="col-span-full rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-10 text-center text-sm text-slate-500">
-                Loading package templates...
-              </div>
-            ) : activeTemplates.length === 0 ? (
-              <div className="col-span-full rounded-3xl border border-dashed border-slate-300 bg-slate-50 p-10 text-center text-sm text-slate-500">
-                {language === 'en' ? `No ${packageTypeCards.find((card) => card.key === selectedType)?.label || 'package'} templates created yet.` : `لا توجد ${packageTypeCards.find((card) => card.key === selectedType)?.labelAr || 'باقات'} بعد.`}
-              </div>
+          {loading ? (
+            <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-10 text-center text-sm text-slate-500">
+              Loading package templates...
+            </div>
+          ) : activeTemplates.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-10 text-center text-sm text-slate-500">
+              {language === 'en' ? `No ${packageTypeCards.find((card) => card.key === selectedType)?.label || 'package'} templates created yet.` : `لا توجد ${packageTypeCards.find((card) => card.key === selectedType)?.labelAr || 'باقات'} بعد.`}
+            </div>
+          ) : isTicketPromotionView ? (
+            filteredTemplates.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-10 text-center text-sm text-slate-500">No ticket promotions match these filters.</div>
             ) : (
-              activeTemplates.map((item) => {
-                const flightDetails = (() => {
-                  if (!item?.flight_details) return {};
-                  if (typeof item.flight_details === 'string') {
-                    try {
-                      const parsed = JSON.parse(item.flight_details);
-                      return parsed && typeof parsed === 'object' ? parsed : {};
-                    } catch {
-                      return {};
-                    }
-                  }
-                  return typeof item.flight_details === 'object' ? item.flight_details : {};
-                })();
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {filteredTemplates.map((item) => {
+                  const flightDetails = parseJsonObject(item.flight_details, createDefaultFlightDetails());
+                  const outboundJourney = flightDetails.outbound?.journey || flightDetails.journey || {};
+                  const returnJourney = flightDetails.return?.journey || flightDetails.return_journey?.journey || {};
+                  const tripType = String(flightDetails.trip_type || '').toLowerCase();
+                  const hasReturn = ['round-trip', 'round_trip', 'roundtrip'].includes(tripType);
+                  const outboundStart = outboundJourney.start_airport || outboundJourney.start || item.departure_point || 'Origin TBD';
+                  const outboundEnd = outboundJourney.end_airport || outboundJourney.end || item.destination || 'Destination TBD';
+                  const returnStart = returnJourney.start_airport || returnJourney.start || outboundEnd;
+                  const returnEnd = returnJourney.end_airport || returnJourney.end || outboundStart;
+                  const outboundStops = Array.isArray(flightDetails.outbound?.stops) ? flightDetails.outbound.stops : [];
+                  const fare = Number(item.selling_price || 0);
 
-                const outboundJourney = flightDetails.outbound?.journey || flightDetails.journey || {};
-                const returnJourney = flightDetails.return?.journey || flightDetails.return_journey?.journey || {};
-                const airlineName = outboundJourney.airline || 'Standard Flight';
-                const startPoint = outboundJourney.start_airport || item?.departure_point || '—';
-                const endPoint = outboundJourney.end_airport || item?.destination || '—';
-                const returnStartPoint = returnJourney.start_airport || returnJourney.start || endPoint;
-                const returnEndPoint = returnJourney.end_airport || returnJourney.end || startPoint;
-                const tripType = flightDetails.trip_type || 'one-way';
-                const rate = Number(item?.selling_price ?? 0);
-                const seats = Number(item?.stock ?? 0);
-                const outboundStops = Array.isArray(flightDetails.outbound?.stops) ? flightDetails.outbound.stops : [];
-                const returnStops = Array.isArray(flightDetails.return?.stops) ? flightDetails.return.stops : (Array.isArray(flightDetails.return_journey?.stops) ? flightDetails.return_journey.stops : []);
-                const layoverCount = outboundStops.length + returnStops.length;
-
-                const isTicketCard = item?.template_type === 'ticket' || item?.template_type === 'ticket_promotion';
-                const isHotelCard = item?.template_type === 'hotel_promotion';
-                const hotelDetails = parseJsonObject(item?.hotel_details || {}, createDefaultHotelDetails());
-                const hotelWebsite = hotelDetails?.hotel_website || '';
-                const hotelMapUrl = hotelDetails?.hotel_map_url || '';
-                const hotelName = hotelDetails?.hotel_name || item?.label || 'Hotel promotion';
-                const hotelCountry = hotelDetails?.country || item?.country || '—';
-                const hotelProvince = hotelDetails?.province || item?.destination || '—';
-                const hotelStars = Number(hotelDetails?.stars || 0);
-                const hotelDiscountLabel = hotelDetails?.discount_type === 'fixed'
-                  ? `${formatDZD(hotelDetails?.discount_value || 0)} off`
-                  : `${hotelDetails?.discount_value || 0}% off`;
-
-                return (
-                  <div
-                    key={item.id}
-                    className="group overflow-hidden rounded-[28px] border border-[#ead9a2] bg-[radial-gradient(circle_at_top_left,_#fffdf9_0%,_#f8f3e3_30%,_#f4efe6_100%)] shadow-[0_16px_45px_rgba(10,17,32,0.07)] transition duration-200 hover:-translate-y-1 hover:border-[#c9a84c]"
-                  >
-                    <div className="flex items-center justify-between border-b border-[#f2e8c8] bg-[#fffaf0] px-4 py-3">
-                      <div className="inline-flex items-center gap-2 rounded-full border border-[#e8d6a3] bg-[#fff7dd] px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.16em] text-[#0a1120]">
-                        <span className="text-[#c9a84c]">✈️</span>
-                        {tripType === 'round-trip' ? 'ROUND TRIP' : tripType === 'multi-city' ? 'MULTI CITY' : 'INTERNATIONAL'}
-                      </div>
-
-                      <span
-                        className={`inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.14em] ${
-                          item.is_available === false ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'
-                        }`}
-                      >
-                        {item.is_available === false ? 'Unavailable' : 'Available'}
-                      </span>
-                    </div>
-
-                    <div className="space-y-3 p-3.5">
-                      <div>
-                        <div className="flex items-center justify-between gap-2">
-                          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[#c9a84c]">
-                            {item.service_ref || 'SERVICE'}
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => openEdit(item)}
-                            className="inline-flex items-center gap-1 rounded-full border border-[#e2cc88] bg-[#fffaf0] px-2 py-1 text-[8px] font-black uppercase tracking-[0.12em] text-[#0a1120] transition hover:bg-[#f9e7a3]"
-                          >
-                            ✏️ Edit
-                          </button>
+                  return (
+                    <article key={item.id} className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                      <header className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-bold uppercase tracking-wide text-slate-500">{item.service_ref || 'Air Ticket'}</p>
+                          <h4 className="truncate text-base font-semibold text-slate-900">{item.label || 'Ticket Promotion'}</h4>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => openEdit(item)}
-                          className="mt-2 w-full text-left text-lg font-black leading-tight text-[#0a1120]"
-                        >
-                          {item.label || 'Ticket Promotion'}
-                        </button>
-                      </div>
+                        <span className={`shrink-0 rounded px-2 py-1 text-[11px] font-semibold ${item.is_available === false ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                          {item.is_available === false ? 'Unavailable' : 'Available'}
+                        </span>
+                      </header>
 
-                      {isTicketCard ? (
-                        <div className="rounded-[18px] border border-[#efe4c5] bg-[linear-gradient(135deg,_#f9f6ef_0%,_#f3efe6_100%)] p-2.5 shadow-inner">
-                          <div className="mb-2 flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.16em] text-[#0a1120]">
-                              <span className="text-[#c9a84c]">✈️</span>
-                              <span>{airlineName}</span>
-                            </div>
-                            {layoverCount > 0 && (
-                              <span className="rounded-full border border-[#ead9a2] bg-[#fffaf0] px-2 py-1 text-[8px] font-black uppercase tracking-[0.12em] text-[#0a1120]">
-                                {layoverCount} layover{layoverCount > 1 ? 's' : ''}
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="space-y-2">
-                            <div className="rounded-xl border border-[#e8dcc0] bg-[#fffdf9] px-3 py-2">
-                              <div className="flex items-center justify-between gap-3">
-                                <p className="text-[9px] font-black uppercase tracking-[0.15em] text-slate-500">Outbound</p>
-                                <span className="rounded-full bg-[#0a1120] px-2 py-1 text-[8px] font-black uppercase tracking-[0.12em] text-white">Out</span>
-                              </div>
-                              <p className="mt-1 text-base font-black text-[#0a1120]">{startPoint} → {endPoint}</p>
-                              {outboundStops.length > 0 && (
-                                <p className="mt-1 text-[10px] text-slate-600">
-                                  Layover: {outboundStops[0]?.stop_airport || outboundStops[0]?.airport || 'TBD'} • {outboundStops[0]?.stop_duration_hours || '—'}
-                                </p>
-                              )}
-                            </div>
-
-                            {tripType === 'round-trip' && (
-                              <div className="rounded-xl border border-[#e8dcc0] bg-[#fffdf9] px-3 py-2">
-                                <div className="flex items-center justify-between gap-3">
-                                  <p className="text-[9px] font-black uppercase tracking-[0.15em] text-slate-500">Return</p>
-                                  <span className="rounded-full bg-[#e7f7ef] px-2 py-1 text-[8px] font-black uppercase tracking-[0.12em] text-[#0f766e]">Return</span>
-                                </div>
-                                <p className="mt-1 text-base font-black text-[#0a1120]">{returnStartPoint} → {returnEndPoint}</p>
-                                {returnStops.length > 0 && (
-                                  <p className="mt-1 text-[10px] text-slate-600">
-                                    Layover: {returnStops[0]?.stop_airport || returnStops[0]?.airport || 'TBD'} • {returnStops[0]?.stop_duration_hours || '—'}
-                                  </p>
-                                )}
-                              </div>
-                            )}
-                          </div>
+                      <div className="space-y-4 p-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Airline</span>
+                          <span className="truncate text-sm font-bold text-slate-800">{outboundJourney.airline || 'Standard Flight'}</span>
                         </div>
-                      ) : isHotelCard ? (
-                        <div className="h-2" />
-                      ) : (
-                        <div className="mt-4 space-y-2 text-sm text-slate-600">
-                          <div className="flex items-center gap-2"><MapPin size={14} className="text-[#c9a84c]" /> {item.country || '—'}</div>
-                          <div className="flex items-center gap-2"><MapPin size={14} className="text-[#c9a84c]" /> {item.destination || item.location || '—'}</div>
-                          <div className="flex items-center gap-2"><CalendarDays size={14} className="text-[#c9a84c]" /> {item.departure_date || '—'}</div>
-                          <div className="flex items-center gap-2"><Clock3 size={14} className="text-[#c9a84c]" /> {(item.duration_nights ?? '—')} nights</div>
-                        </div>
-                      )}
 
-                      {isHotelCard ? (
-                        <div className="rounded-[18px] border border-[#efe4c5] bg-[linear-gradient(135deg,_#fffaf1_0%,_#fef7df_100%)] p-3 shadow-inner">
-                          <div className="flex items-start justify-between gap-3">
-                            <div>
-                              <p className="text-[9px] font-black uppercase tracking-[0.18em] text-[#c9a84c]">Hotel offer</p>
-                              <h4 className="mt-1 text-lg font-black text-[#0a1120]">{hotelName}</h4>
-                            </div>
-                            <div className="rounded-full border border-[#ead9a2] bg-[#fffdf8] px-2 py-1 text-[9px] font-black uppercase tracking-[0.14em] text-[#0a1120]">
-                              {hotelStars ? `${hotelStars}★` : 'Hotel'}
-                            </div>
+                        <div className="rounded-lg border border-slate-200 p-3">
+                          <div className="mb-1 flex items-center justify-between text-[11px] font-semibold uppercase text-slate-500">
+                            <span>Outbound</span>
+                            <span className="rounded bg-slate-100 px-2 py-0.5">Flight</span>
                           </div>
-
-                          <div className="mt-3 space-y-2 text-sm text-slate-700">
-                            <div className="flex items-center gap-2"><MapPin size={14} className="text-[#c9a84c]" /> {hotelCountry}</div>
-                            <div className="flex items-center gap-2"><MapPin size={14} className="text-[#c9a84c]" /> {hotelProvince}</div>
-                            <div className="flex items-center gap-2"><CalendarDays size={14} className="text-[#c9a84c]" /> {hotelDetails?.start_date || '—'} {hotelDetails?.end_date ? `→ ${hotelDetails.end_date}` : ''}</div>
-                            <div className="flex items-center gap-2"><Tag size={14} className="text-[#c9a84c]" /> {hotelDiscountLabel}</div>
-                          </div>
-
-                          {(hotelWebsite || hotelMapUrl) && (
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              {hotelWebsite && (
-                                <a href={hotelWebsite} target="_blank" rel="noreferrer" className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-[#0a1120]">
-                                  Website
-                                </a>
-                              )}
-                              {hotelMapUrl && (
-                                <a href={hotelMapUrl} target="_blank" rel="noreferrer" className="inline-flex items-center rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-semibold text-[#0a1120]">
-                                  Maps
-                                </a>
-                              )}
-                            </div>
+                          <p className="break-words text-lg font-bold text-slate-900">{outboundStart} <span className="text-amber-600">→</span> {outboundEnd}</p>
+                          {outboundStops.length > 0 && (
+                            <p className="mt-1 text-xs text-slate-500">Layover: {outboundStops[0]?.stop_airport || outboundStops[0]?.airport || 'TBD'} · {outboundStops[0]?.stop_duration_hours || '—'}</p>
                           )}
+                          <p className="mt-1 text-xs text-slate-500">
+                            {outboundJourney.departure_time || outboundJourney.departure || 'Time TBD'}
+                            {outboundJourney.arrival_time || outboundJourney.arrival ? ` → ${outboundJourney.arrival_time || outboundJourney.arrival}` : ''}
+                          </p>
                         </div>
-                      ) : isTicketCard ? (
-                        <div className="flex items-center justify-between rounded-2xl border border-[#ead9a2] bg-[#fffaf0] px-3 py-2.5">
-                          <div>
-                            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Price</p>
-                            <p className="mt-1 text-xl font-black text-[#0a1120]">
-                              {new Intl.NumberFormat('fr-DZ', {
-                                style: 'currency',
-                                currency: 'DZD',
-                                maximumFractionDigits: 0,
-                              }).format(rate)}
+
+                        {hasReturn && (
+                          <div className="rounded-lg border border-slate-200 p-3">
+                            <p className="mb-1 text-[11px] font-semibold uppercase text-slate-500">Return</p>
+                            <p className="break-words text-lg font-bold text-slate-900">{returnStart} <span className="text-amber-600">→</span> {returnEnd}</p>
+                            <p className="mt-1 text-xs text-slate-500">
+                              {returnJourney.departure_time || returnJourney.departure || 'Time TBD'}
+                              {returnJourney.arrival_time || returnJourney.arrival ? ` → ${returnJourney.arrival_time || returnJourney.arrival}` : ''}
                             </p>
                           </div>
+                        )}
 
+                        <div className="flex items-end justify-between gap-4 border-t border-slate-200 pt-3">
+                          <div>
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Price</p>
+                            <p className="text-xl font-bold text-slate-900">{formatDZD(fare)}</p>
+                          </div>
                           <div className="text-right">
-                            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Seats</p>
-                            <p className="mt-1 text-xl font-black text-[#0a1120]">{seats}</p>
+                            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Available Seats</p>
+                            <span className="mt-1 inline-flex min-w-10 justify-center rounded-full bg-amber-100 px-3 py-1 text-sm font-bold text-amber-900">{item.stock ?? '—'}</span>
                           </div>
                         </div>
-                      ) : null}
 
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleOpenStats(item)}
-                          className="flex-1 rounded-xl bg-[#fff7dd] px-3 py-2.5 text-xs font-black uppercase tracking-[0.12em] text-[#0a1120] transition hover:bg-[#f9e7a3]"
-                        >
-                          📊 View Stats
-                        </button>
+                        <div className="flex justify-end">
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={() => setOpenActionId(openActionId === item.id ? null : item.id)}
+                              aria-label={`Actions for ${item.label || 'ticket promotion'}`}
+                              aria-haspopup="menu"
+                              aria-expanded={openActionId === item.id}
+                              className="rounded p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                            >
+                              <EllipsisVertical size={20} aria-hidden="true" />
+                            </button>
+                            {openActionId === item.id && (
+                              <>
+                                <button type="button" aria-label="Close package actions" onClick={() => setOpenActionId(null)} className="fixed inset-0 z-40 cursor-default" />
+                                <div role="menu" className="absolute bottom-10 right-0 z-50 flex w-36 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white text-left shadow-xl">
+                                  <button type="button" role="menuitem" onClick={() => { setOpenActionId(null); openEdit(item); }} className="border-b border-slate-100 px-4 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50">Edit</button>
+                                  <button type="button" role="menuitem" onClick={() => { setOpenActionId(null); openPackageDetails(item); }} className="border-b border-slate-100 px-4 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50">Details</button>
+                                  <button type="button" role="menuitem" onClick={() => { setOpenActionId(null); handleOpenStats(item); }} className="border-b border-slate-100 px-4 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50">Stats</button>
+                                  <button type="button" role="menuitem" onClick={() => { setOpenActionId(null); setDeletePackageTarget(item.id); }} disabled={!canWrite} className="px-4 py-2 text-left text-sm font-bold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50">Delete</button>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )
+          ) : (
+            <div className="mb-6 w-full overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+              <table className="w-full border-collapse text-left text-sm whitespace-nowrap">
+                <thead className="bg-slate-900 text-white">
+                  <tr>
+                    <th scope="col" className="p-3 font-semibold">Country</th>
+                    <th scope="col" className="p-3 font-semibold">{isHotelPromotionView ? 'City' : 'Destination'}</th>
+                    <th scope="col" className="p-3 font-semibold">{isHotelPromotionView ? 'Start Date' : 'Departure'}</th>
+                    <th scope="col" className="p-3 font-semibold">{isHotelPromotionView ? 'End Date' : 'Return'}</th>
+                    {isHotelPromotionView ? (
+                      <th scope="col" className="p-3 font-semibold">Availability</th>
+                    ) : (
+                      <>
+                        <th scope="col" className="p-3 font-semibold">Duration</th>
+                        <th scope="col" className="p-3 font-semibold">Origin</th>
+                        <th scope="col" className="p-3 font-semibold">Transport</th>
+                      </>
+                    )}
+                    <th scope="col" className="min-w-[200px] p-3 font-semibold">{isHotelPromotionView ? 'Discount' : 'Price'}</th>
+                    <th scope="col" className="min-w-[320px] p-3 font-semibold">Hotel</th>
+                    <th scope="col" className="p-3 font-semibold">{isHotelPromotionView ? 'Free Child Age' : 'Meals'}</th>
+                    <th scope="col" className="p-3 text-right font-semibold">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredTemplates.length === 0 ? (
+                    <tr>
+                      <td colSpan={isHotelPromotionView ? 9 : 11} className="p-8 text-center text-sm text-slate-500">No packages match these filters.</td>
+                    </tr>
+                  ) : filteredTemplates.map((item) => {
+                    const travelSchedule = getTemplateTravelDates(item);
+                    const rowTravelDates = travelSchedule.length ? travelSchedule : [{
+                      departure_date: item.departure_date,
+                      return_date: item.return_date,
+                      destination: item.destination,
+                      departure_point: item.departure_point,
+                      transport: item.transport,
+                    }];
+                    const hotels = parseJsonArray(item.hotels);
+                    const hotelDetails = parseJsonObject(item.hotel_details, createDefaultHotelDetails());
+                    const hotelDiscount = Number(hotelDetails.discount_value || 0);
+                    const hotelDiscountLabel = hotelDetails.discount_type === 'fixed'
+                      ? (hotelDiscount ? `${formatDZD(hotelDiscount)} off` : '—')
+                      : (hotelDiscount ? `${hotelDiscount}% off` : '—');
+                    const firstTravel = travelSchedule[0] || {};
+                    const hotelName = hotelDetails.hotel_name || item.label;
+                    const hotelSummary = hotels.map((hotel) => hotel.hotel_name).filter(Boolean).join(', ') || hotelName || 'Voir Hotels';
+                    const mealSummary = [...new Set(hotels.map((hotel) => hotel.meal_type).filter(Boolean))].join(', ') || 'N/A';
+                    const priceCandidates = [
+                      firstTravel.prix_double,
+                      firstTravel.prix_single,
+                      firstTravel.prix_triple,
+                      hotels[0]?.prix_double,
+                      hotels[0]?.prix_single,
+                      item.selling_price,
+                    ];
+                    const startingPrice = priceCandidates.find((price) => price !== '' && price !== null && price !== undefined);
+                    const hasPrices = (entry) => ['single', 'double', 'triple', 'quadruple', 'quintuple']
+                      .some((tier) => entry?.[`prix_${tier}`] !== '' && entry?.[`prix_${tier}`] !== null && entry?.[`prix_${tier}`] !== undefined)
+                      || parseJsonArray(entry?.custom_prices).some((price) => price?.price !== '' && price?.price !== null && price?.price !== undefined);
+                    const formatPriceDetails = (entry) => [
+                      ['Single', entry?.prix_single],
+                      ['Double', entry?.prix_double],
+                      ['Triple', entry?.prix_triple],
+                      ['Quadruple', entry?.prix_quadruple],
+                      ['Quintuple', entry?.prix_quintuple],
+                      ...parseJsonArray(entry?.custom_prices).map((price) => [price.name || 'Custom', price.price ?? price.amount]),
+                    ].filter(([, price]) => price !== '' && price !== null && price !== undefined)
+                      .map(([label, price]) => `${label}: ${formatDZD(price)}`);
+                    const renderTravelCell = (getValue) => (
+                      <div className="max-h-6 space-y-1 overflow-hidden transition-[max-height] duration-200 group-hover:max-h-[1000px] group-focus-within:max-h-[1000px]">
+                        {rowTravelDates.map((travel, index) => (
+                          <div key={travel.id || `${item.id}-travel-cell-${index}`} className="break-words whitespace-normal text-xs leading-5">
+                            {getValue(travel, index) || 'N/A'}
+                          </div>
+                        ))}
+                      </div>
+                    );
 
-                        {item.template_type !== 'ticket' && item.template_type !== 'ticket_promotion' && (
-                          <button
-                            type="button"
-                            onClick={() => handleGenerateBrochure(item)}
-                            disabled={generatingBrochureId === item.id}
-                            className="rounded-xl bg-[#0a1120] px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-                          >
-                            {generatingBrochureId === item.id ? 'Generating...' : 'Generate Brochure'}
-                          </button>
-                        )}
-
-                        <button
-                          type="button"
-                          onClick={() => openPackageDetails(item)}
-                          className="flex-1 rounded-xl border border-[#e4d2a0] bg-white px-3 py-2.5 text-xs font-black uppercase tracking-[0.12em] text-[#0a1120] shadow-sm transition hover:border-[#c9a84c] hover:bg-[#fffaf0]"
-                        >
-                          View Details
-                        </button>
-
-                        {item.brochure_url && (
+                    return (
+                      <tr key={item.id} className="group border-b border-slate-100 align-top transition-colors hover:bg-slate-50">
+                        <td className="p-3 font-medium text-slate-800">{isHotelPromotionView ? (hotelDetails.country || item.country || '—') : (item.country || 'N/A')}</td>
+                        <td className="max-w-56 p-3 text-slate-600">{isHotelPromotionView
+                          ? (hotelDetails.province || item.destination || '—')
+                          : renderTravelCell((travel) => travel.destination || item.destination || item.location || item.label)}</td>
+                        <td className="p-3 text-slate-600">{isHotelPromotionView
+                          ? (formatPackageDate(hotelDetails.start_date) || '—')
+                          : renderTravelCell((travel, index) => formatPackageDate(travel.departure_date || (!index ? item.departure_date : '')))}</td>
+                        <td className="p-3 text-slate-600">{isHotelPromotionView
+                          ? (formatPackageDate(hotelDetails.end_date) || '—')
+                          : renderTravelCell((travel, index) => formatPackageDate(travel.return_date || (!index ? item.return_date : '')))}</td>
+                        {isHotelPromotionView ? (
+                          <td className="p-3">
+                            <span className={`rounded px-2 py-1 text-xs font-semibold ${item.is_available === false ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                              {item.is_available === false ? 'Unavailable' : 'Available'}
+                            </span>
+                          </td>
+                        ) : (
                           <>
-                            <button
-                              type="button"
-                              onClick={() => downloadBrochureLink(item.brochure_url)}
-                              className="rounded-xl border border-[#c9a84c] bg-[#fff7dd] px-3 py-2 text-xs font-semibold text-[#0a1120]"
-                            >
-                              Download
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleCopyBrochureLink(item.brochure_url)}
-                              className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700"
-                            >
-                              Copy link
-                            </button>
+                            <td className="p-3 text-slate-600">{item.duration_nights ? `${item.duration_nights} nuits` : 'N/A'}</td>
+                            <td className="p-3 text-slate-600">{renderTravelCell((travel, index) => travel.departure_point || (!index ? item.departure_point : ''))}</td>
+                            <td className="p-3 text-slate-600">{renderTravelCell((travel, index) => travel.transport || (!index ? item.transport : ''))}</td>
                           </>
                         )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
+                        <td className="max-w-64 p-3 whitespace-normal">
+                          {isHotelPromotionView ? (
+                            <span className="font-bold text-amber-800">{hotelDiscountLabel}</span>
+                          ) : (
+                            <>
+                              <div className="font-bold text-slate-800 group-hover:hidden group-focus-within:hidden">
+                                {startingPrice !== undefined ? formatDZD(startingPrice) : 'Voir Prix'}
+                              </div>
+                              <div className="hidden space-y-2 text-xs text-slate-700 group-hover:block group-focus-within:block">
+                                {travelSchedule.map((travel, index) => {
+                                  const tiers = formatPriceDetails(travel);
+                                  return tiers.length ? (
+                                    <div key={travel.id || `${item.id}-travel-${index}`}>
+                                      <p className="font-semibold">{travel.label || `Départ ${index + 1}`}</p>
+                                      {tiers.map((tier) => <p key={tier}>{tier}</p>)}
+                                    </div>
+                                  ) : null;
+                                })}
+                                {hotels.map((hotel, index) => {
+                                  const tiers = formatPriceDetails(hotel);
+                                  return tiers.length ? (
+                                    <div key={hotel.id || `${item.id}-hotel-price-${index}`}>
+                                      <p className="font-semibold">{hotel.hotel_name || `Hotel ${index + 1}`}</p>
+                                      {tiers.map((tier) => <p key={tier}>{tier}</p>)}
+                                    </div>
+                                  ) : null;
+                                })}
+                                {!travelSchedule.some(hasPrices) && !hotels.some(hasPrices) && (
+                                  <p>{item.selling_price !== '' && item.selling_price !== null ? formatDZD(item.selling_price) : 'Prix sur demande'}</p>
+                                )}
+                              </div>
+                            </>
+                          )}
+                        </td>
+                        <td className="max-w-64 p-3 whitespace-normal">
+                          {isHotelPromotionView ? (
+                            <span className="break-words font-medium text-slate-700">{hotelDetails.hotel_name || '—'}</span>
+                          ) : (
+                            <>
+                              <div className="line-clamp-1 text-slate-600 group-hover:hidden group-focus-within:hidden">{hotelSummary}</div>
+                              <div className="hidden space-y-1 text-xs text-slate-700 group-hover:block group-focus-within:block">
+                                {hotels.length ? hotels.map((hotel, index) => {
+                                  const isOptionalHotel = hotel.is_primary === false || hotel.pricing_scope === 'optional';
+                                  return (
+                                    <div
+                                      key={hotel.id || `${item.id}-hotel-${index}`}
+                                      className={`mb-1 rounded p-1 ${isOptionalHotel ? 'bg-amber-50 font-medium text-amber-800' : 'text-slate-700'}`}
+                                    >
+                                      {isOptionalHotel && <span className="mr-1 text-[10px] font-bold uppercase tracking-wider">[Optional]</span>}
+                                      {hotel.nights ? `${hotel.nights}N ` : ''}{hotel.hotel_name || hotel.name || 'Hotel'}
+                                      {hotel.location ? `, ${hotel.location}` : ''}
+                                      {hotel.meal_type ? ` · ${hotel.meal_type}` : ''}
+                                      {hotel.assigned_nights_dates ? ` (${hotel.assigned_nights_dates})` : ''}
+                                    </div>
+                                  );
+                                }) : <p>{hotelName || 'Aucun détail'}</p>}
+                                {hotelDetails.province && <p>{hotelDetails.province}</p>}
+                              </div>
+                            </>
+                          )}
+                        </td>
+                        <td className="p-3 text-slate-600">
+                          {isHotelPromotionView
+                            ? (hotelDetails.free_child_age === null || hotelDetails.free_child_age === undefined || hotelDetails.free_child_age === '' ? '—' : `Up to ${hotelDetails.free_child_age} yrs`)
+                            : mealSummary}
+                        </td>
+                        <td className="relative p-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => setOpenActionId(openActionId === item.id ? null : item.id)}
+                            aria-label={`Actions for ${item.destination || item.label || 'package'}`}
+                            aria-haspopup="menu"
+                            aria-expanded={openActionId === item.id}
+                            className="rounded p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+                          >
+                            <EllipsisVertical size={20} aria-hidden="true" />
+                          </button>
+                          {openActionId === item.id && (
+                            <>
+                              <button
+                                type="button"
+                                aria-label="Close package actions"
+                                onClick={() => setOpenActionId(null)}
+                                className="fixed inset-0 z-40 cursor-default"
+                              />
+                              <div role="menu" className="absolute right-8 top-10 z-50 flex w-36 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white text-left shadow-xl">
+                                <button type="button" role="menuitem" onClick={() => { setOpenActionId(null); openEdit(item); }} className="border-b border-slate-100 px-4 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50">Edit</button>
+                                <button type="button" role="menuitem" onClick={() => { setOpenActionId(null); openPackageDetails(item); }} className="border-b border-slate-100 px-4 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50">Details</button>
+                                <button type="button" role="menuitem" onClick={() => { setOpenActionId(null); generatePDF(item); }} disabled={generatingBrochureId !== null} className="border-b border-slate-100 px-4 py-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60">Brochure</button>
+                                <button type="button" role="menuitem" onClick={() => { setOpenActionId(null); setDeletePackageTarget(item.id); }} disabled={!canWrite} className="px-4 py-2 text-left text-sm font-bold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50">Delete</button>
+                              </div>
+                            </>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
-      {brochurePickerOpen && brochurePickerTemplate && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm">
-          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
-            <div className="mb-5 flex items-center justify-between">
-              <div>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#c9a84c]">Brochure Cover</p>
-                <h3 className="mt-2 font-serif text-2xl text-[#0a1120]">Select the image for the brochure</h3>
-              </div>
-
-              <button type="button" onClick={() => setBrochurePickerOpen(false)} className="rounded-lg p-2 text-slate-600 transition hover:bg-slate-200">
-                <X size={18} />
-              </button>
-            </div>
-
-            <div className="space-y-5">
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <p className="text-sm font-semibold text-slate-700">Available images</p>
-                  <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-[#0a1120] px-3 py-2 text-xs font-semibold text-white">
-                    <Plus size={14} />
-                    Add local image
-                    <input type="file" accept="image/*" className="hidden" onChange={handleLocalBrochureUpload} />
-                  </label>
-                </div>
-
-                {brochurePickerPhotos.length === 0 ? (
-                  <p className="text-sm text-slate-500">No brochure image selected yet. Upload one to continue.</p>
-                ) : (
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                    {brochurePickerPhotos.map((photo, index) => (
-                      <div key={`${photo}-${index}`} className={`relative overflow-hidden rounded-2xl border transition ${selectedBrochurePhoto === photo ? 'border-[#c9a84c] ring-2 ring-[#f9e7a3]' : 'border-slate-200'}`}>
-                        <button
-                          type="button"
-                          onClick={() => setSelectedBrochurePhoto(photo)}
-                          className="block w-full text-left"
-                        >
-                          <img src={photo} alt={`Brochure selection ${index + 1}`} className="h-28 w-full object-cover" />
-                          <div className="px-3 py-2 text-xs font-medium text-slate-600">Image {index + 1}</div>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setBrochurePickerPhotos((prev) => prev.filter((item) => item !== photo))}
-                          className="absolute right-2 top-2 rounded-full bg-slate-900/80 p-1.5 text-white transition hover:bg-slate-900"
-                          aria-label={`Remove brochure image ${index + 1}`}
-                        >
-                          <X size={12} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <button
-                  type="button"
-                  onClick={handleRemoveSelectedBrochurePhoto}
-                  disabled={!selectedBrochurePhoto}
-                  className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Remove selected photo
-                </button>
-
-                <div className="flex justify-end gap-3">
-                <button type="button" onClick={() => setBrochurePickerOpen(false)} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700">
-                  Cancel
-                </button>
-                  <button
-                    type="button"
-                    disabled={brochurePickerPhotos.length === 0}
-                    onClick={confirmBrochureGeneration}
-                    className="rounded-xl bg-[#c9a84c] px-4 py-2.5 text-sm font-bold text-[#0a1120] disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Generate brochure
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+      {deletePackageTarget && (
+        <SecureDeleteModal
+          isOpen={Boolean(deletePackageTarget)}
+          onClose={() => setDeletePackageTarget(null)}
+          onConfirm={() => handleDeletePackage(deletePackageTarget)}
+          title="Delete Package"
+          description="Permanently delete this package template? Enter the agency PIN to continue."
+        />
       )}
 
       {ticketViewModalOpen && selectedPackageDetails && (
@@ -3939,7 +4084,7 @@ export default function Packages({ language = 'en' }) {
 
             {!isTicketPromotionPackage && !isHotelPromotionPackage && (
               <div className="mb-5 flex flex-wrap items-center gap-2 rounded-xl bg-slate-100 p-1 text-xs font-semibold text-slate-600">
-                {['Basic', 'Travel', 'Hotels', 'Inclusions', 'Exclusions', 'Cancellation', 'Good to Know'].map((label, index) => (
+                {['Basic', 'Travel', 'Hotels', 'Supplier', 'Inclusions', 'Exclusions', 'Cancellation', 'Good to Know'].map((label, index) => (
                   <button
                     key={label}
                     type="button"
@@ -3982,8 +4127,8 @@ export default function Packages({ language = 'en' }) {
                   )
                 ) : isHotelPromotionPackage ? (
                   <button type="button" onClick={handleSave} className="rounded-xl bg-[#c9a84c] px-4 py-2.5 text-sm font-bold text-[#0a1120]">Save</button>
-                ) : step < 7 ? (
-                  <button type="button" onClick={() => setStep((prev) => Math.min(7, prev + 1))} className="rounded-xl bg-[#c9a84c] px-4 py-2.5 text-sm font-bold text-[#0a1120]">Next</button>
+                ) : step < 8 ? (
+                  <button type="button" onClick={() => setStep((prev) => Math.min(8, prev + 1))} className="rounded-xl bg-[#c9a84c] px-4 py-2.5 text-sm font-bold text-[#0a1120]">Next</button>
                 ) : (
                   <button type="button" onClick={handleSave} className="rounded-xl bg-[#c9a84c] px-4 py-2.5 text-sm font-bold text-[#0a1120]">Save</button>
                 )}
@@ -3998,6 +4143,17 @@ export default function Packages({ language = 'en' }) {
           {toast}
         </div>
       )}
-    </div>
+
+      </div>
+      {selectedPkgForPdf && (
+        <div className="hidden print:fixed print:inset-0 print:z-[99999] print:block print:bg-white">
+          {String(selectedPkgForPdf.template_type || '').toLowerCase() === 'hotel_promotion'
+            ? <HotelPromotionBrochure packageData={selectedPkgForPdf} />
+            : ['hajj', 'omra'].includes(String(selectedPkgForPdf.template_type || '').toLowerCase())
+            ? <HajjOmraBrochure packageData={selectedPkgForPdf} />
+            : <TripBrochure packageData={selectedPkgForPdf} />}
+        </div>
+      )}
+    </>
   );
 }

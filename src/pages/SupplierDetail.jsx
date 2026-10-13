@@ -15,6 +15,7 @@ import {
 import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/currency';
 import { processSupplierPayment } from '../lib/financialAudit';
+import { useFinancialPasswordConfirmation } from '../components/useFinancialPasswordConfirmation';
 
 const emptyPaymentForm = {
   amount: '',
@@ -72,6 +73,7 @@ class SupplierDetailErrorBoundary extends React.Component {
 }
 
 function SupplierDetailInner() {
+  const confirmAction = useFinancialPasswordConfirmation();
   const { supplierId } = useParams();
   const navigate = useNavigate();
   const [supplier, setSupplier] = useState(null);
@@ -256,6 +258,9 @@ function SupplierDetailInner() {
       setToast(`Insufficient funds! This account only has ${currentBalance} ${sourceAccount.currency || 'DA'} available.`);
       return;
     }
+
+    const isAuthorized = await confirmAction('supplier payment');
+    if (!isAuthorized) return;
 
     try {
       setSaving(true);

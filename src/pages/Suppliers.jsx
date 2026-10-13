@@ -4,6 +4,7 @@ import { AlertTriangle, Building2, CheckCircle2, ChevronDown, ChevronUp, Plus, S
 import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/currency';
 import { isDuplicateSupplierPayment, processSupplierPayment } from '../lib/financialAudit';
+import { useFinancialPasswordConfirmation } from '../components/useFinancialPasswordConfirmation';
 
 const defaultSupplierTypes = ['General', 'Hotel', 'Airline', 'Transport', 'Tour Operator', 'Visa', 'Insurance', 'Agency', 'Other'];
 
@@ -83,6 +84,7 @@ const getDebtBadge = (value) => {
 };
 
 export default function Suppliers() {
+  const confirmAction = useFinancialPasswordConfirmation();
   const [suppliers, setSuppliers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -414,6 +416,9 @@ export default function Suppliers() {
       setError(`Insufficient funds! This account only has ${currentBalance} ${sourceAccount.currency || 'DA'} available.`);
       return;
     }
+
+    const isAuthorized = await confirmAction('supplier payment');
+    if (!isAuthorized) return;
 
     try {
       setPaymentSaving(true);

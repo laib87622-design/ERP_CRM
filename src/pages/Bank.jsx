@@ -4,7 +4,7 @@ import { Wallet, CreditCard, Smartphone, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/currency';
 import BankingFilterBar from '../components/ui/BankingFilterBar';
-import SecureDeleteModal from '../components/ui/SecureDeleteModal';
+import { useFinancialPasswordConfirmation } from '../components/useFinancialPasswordConfirmation';
 
 const translations = {
   en: {
@@ -64,6 +64,7 @@ const translations = {
 };
 
 const Bank = ({ language = 'en', role: initialRole = 'viewer' }) => {
+  const confirmAction = useFinancialPasswordConfirmation();
   const [role, setRole] = useState(initialRole);
   const [financialAccounts, setFinancialAccounts] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
@@ -76,7 +77,6 @@ const Bank = ({ language = 'en', role: initialRole = 'viewer' }) => {
   const [settleSupplier, setSettleSupplier] = useState(null);
   const [settleForm, setSettleForm] = useState({ amount: '', note: '', selected_account_id: '' });
   const [settleSaving, setSettleSaving] = useState(false);
-  const [deleteAccountTarget, setDeleteAccountTarget] = useState(null);
 
   const canView = role === 'super_admin' || role === 'cashier' || role === 'sales_agent';
   const canWrite = role === 'super_admin' || role === 'cashier';
@@ -245,6 +245,9 @@ const Bank = ({ language = 'en', role: initialRole = 'viewer' }) => {
       return;
     }
 
+    const isAuthorized = await confirmAction('supplier debt settlement');
+    if (!isAuthorized) return;
+
     let settlementError = '';
 
     try {
@@ -347,6 +350,9 @@ const Bank = ({ language = 'en', role: initialRole = 'viewer' }) => {
       return;
     }
 
+    const isAuthorized = await confirmAction('financial account deletion');
+    if (!isAuthorized) return;
+
     try {
       setError('');
       const { error } = await supabase.from('financial_accounts').delete().eq('id', accountId);
@@ -354,8 +360,6 @@ const Bank = ({ language = 'en', role: initialRole = 'viewer' }) => {
       await loadBankData();
     } catch (err) {
       setError(err.message || 'Unable to delete financial account.');
-    } finally {
-      setDeleteAccountTarget(null);
     }
   };
 
@@ -380,15 +384,6 @@ const Bank = ({ language = 'en', role: initialRole = 'viewer' }) => {
 
       {error && (
         <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
-      )}
-
-      {deleteAccountTarget && (
-        <SecureDeleteModal
-          isOpen={Boolean(deleteAccountTarget)}
-          onClose={() => setDeleteAccountTarget(null)}
-          onConfirm={() => handleDeleteFinancialAccount(deleteAccountTarget)}
-          title="Delete Bank Account"
-        />
       )}
 
       {loading ? (
@@ -469,7 +464,7 @@ const Bank = ({ language = 'en', role: initialRole = 'viewer' }) => {
                     </button>
                     <button
                       type="button"
-                      onClick={() => setDeleteAccountTarget(account.id)}
+                      onClick={() => handleDeleteFinancialAccount(account.id)}
                       className="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-semibold text-red-700"
                     >
                       {t.delete}

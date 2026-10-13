@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase';
 import { formatCurrency } from '../lib/currency';
 import { calculateCommissionAmount, fetchAgencySettings, getCommissionRuleForType, getPackageTypeDescription, slugifyCommissionTypeKey } from '../lib/agencySettings';
 import { insertBankEntryAndUpdateBalance, recordCommissionPayment } from './BankEntriesLedger';
+import { useFinancialPasswordConfirmation } from '../components/useFinancialPasswordConfirmation';
 
 const statusStyles = {
   paid: 'bg-emerald-100 text-emerald-700',
@@ -78,6 +79,7 @@ const getInvoicePaymentMeta = (invoice, paymentTypeOverride, amountPaidOverride)
 };
 
 export default function InvoiceDetail({ language = 'en' }) {
+  const confirmAction = useFinancialPasswordConfirmation();
   const translations = {
     en: {
       loading: 'Loading invoice details...',
@@ -585,6 +587,8 @@ export default function InvoiceDetail({ language = 'en' }) {
                 disabled={savingPayment || invoice.status === 'paid'}
                 onClick={async () => {
                   if (!supabase || !invoice) return;
+                  const isAuthorized = await confirmAction('partial invoice payment');
+                  if (!isAuthorized) return;
                   setSavingPayment(true);
 
                   try {
@@ -625,6 +629,8 @@ export default function InvoiceDetail({ language = 'en' }) {
               disabled={savingPayment || invoice.status === 'paid'}
               onClick={async () => {
                 if (!supabase || !invoice) return;
+                const isAuthorized = await confirmAction('invoice payment');
+                if (!isAuthorized) return;
                 setSavingPayment(true);
 
                 try {

@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS agency_settings (
   bank_name text NOT NULL DEFAULT '',
   bank_account text NOT NULL DEFAULT '',
   iban text NOT NULL DEFAULT '',
+  admin_pin text NOT NULL DEFAULT '1234',
+  secure_delete_pin text NOT NULL DEFAULT '1234',
   package_type_descriptions jsonb NOT NULL DEFAULT '{
     "trip": "Standard trip package service.",
     "hajj": "Hajj package service including pilgrimage arrangements and hospitality support.",
@@ -63,6 +65,8 @@ CREATE TABLE IF NOT EXISTS agent_commissions (
   agent_id uuid NOT NULL,
   booking_id uuid NULL,
   invoice_id uuid NULL,
+  source_type text NOT NULL DEFAULT 'commission',
+  salary_month date NULL,
   amount numeric(12,2) NOT NULL DEFAULT 0,
   status text NOT NULL DEFAULT 'PENDING_PAYMENT' CHECK (status IN ('PENDING_PAYMENT', 'READY_TO_PAY', 'PAID', 'CANCELLED')),
   notes text,
@@ -75,6 +79,14 @@ CREATE TABLE IF NOT EXISTS agent_commissions (
   CONSTRAINT agent_commissions_invoice_fk FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE SET NULL
 );
 
+ALTER TABLE public.agency_settings
+  ADD COLUMN IF NOT EXISTS admin_pin text NOT NULL DEFAULT '1234',
+  ADD COLUMN IF NOT EXISTS secure_delete_pin text NOT NULL DEFAULT '1234';
+
+ALTER TABLE public.agent_commissions
+  ADD COLUMN IF NOT EXISTS source_type text NOT NULL DEFAULT 'commission',
+  ADD COLUMN IF NOT EXISTS salary_month date NULL;
+
 CREATE INDEX IF NOT EXISTS agent_commissions_agent_idx
   ON public.agent_commissions (agent_id, status);
 
@@ -83,6 +95,9 @@ CREATE INDEX IF NOT EXISTS agent_commissions_booking_idx
 
 CREATE UNIQUE INDEX IF NOT EXISTS agent_commissions_booking_invoice_agent_unique
   ON public.agent_commissions (booking_id, invoice_id, agent_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS agent_commissions_agent_salary_month_unique
+  ON public.agent_commissions (agent_id, salary_month);
 
 CREATE TABLE IF NOT EXISTS booking_packages (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -194,7 +209,8 @@ BEGIN
       ADD COLUMN IF NOT EXISTS brochure_url text,
       ADD COLUMN IF NOT EXISTS photos jsonb,
       ADD COLUMN IF NOT EXISTS label_ar text,
-      ADD COLUMN IF NOT EXISTS description text;
+      ADD COLUMN IF NOT EXISTS description text,
+      ADD COLUMN IF NOT EXISTS supplier_drive_link text;
   END IF;
 END $$;
 

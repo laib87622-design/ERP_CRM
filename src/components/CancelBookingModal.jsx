@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { useFinancialPasswordConfirmation } from './useFinancialPasswordConfirmation';
 
 const formatDzd = (value) =>
   new Intl.NumberFormat('fr-DZ', {
@@ -10,6 +11,7 @@ const formatDzd = (value) =>
   }).format(Number(value || 0));
 
 export default function CancelBookingModal({ booking, onClose, onSuccess, user = null }) {
+  const confirmAction = useFinancialPasswordConfirmation();
   const [financialAccounts, setFinancialAccounts] = useState([]);
   const [clientRefundAmount, setClientRefundAmount] = useState(0);
   const [clientRefundAccountId, setClientRefundAccountId] = useState('');
@@ -52,6 +54,9 @@ export default function CancelBookingModal({ booking, onClose, onSuccess, user =
       setError('Supabase is not configured yet.');
       return;
     }
+
+    const isAuthorized = await confirmAction('booking cancellation and refunds');
+    if (!isAuthorized) return;
 
     try {
       setSubmitting(true);

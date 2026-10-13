@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ChevronRight, Landmark, Plus, Wallet } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { useFinancialPasswordConfirmation } from '../components/useFinancialPasswordConfirmation';
 
 const getCurrentLocalDateTime = () => {
   const now = new Date();
@@ -19,6 +20,7 @@ const defaultForm = {
 };
 
 export default function MiscellaneousPayment() {
+  const confirmAction = useFinancialPasswordConfirmation();
   const navigate = useNavigate();
   const [accounts, setAccounts] = useState([]);
   const [form, setForm] = useState(defaultForm);
@@ -93,6 +95,9 @@ export default function MiscellaneousPayment() {
       setError(`Insufficient funds! This account only has ${currentBalance} ${selectedAccount.currency || 'DA'} available.`);
       return;
     }
+
+    const isAuthorized = await confirmAction('manual bank adjustment');
+    if (!isAuthorized) return;
 
     try {
       setSaving(true);

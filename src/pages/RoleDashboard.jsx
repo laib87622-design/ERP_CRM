@@ -8,6 +8,7 @@ import {
   Users,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { useFinancialPasswordConfirmation } from '../components/useFinancialPasswordConfirmation';
 
 const roleLabels = {
   super_admin: 'Super Admin',
@@ -57,6 +58,7 @@ const getBookingStatusBadge = (status) => {
 };
 
 export default function RoleDashboard() {
+  const confirmAction = useFinancialPasswordConfirmation();
   const [employees, setEmployees] = useState([]);
   const [selectedAgentId, setSelectedAgentId] = useState(null);
   const [statusFilter, setStatusFilter] = useState('all');
@@ -459,6 +461,9 @@ export default function RoleDashboard() {
       setError('This employee does not have a valid monthly base salary configured.');
       return;
     }
+
+    const isAuthorized = await confirmAction('salary payout');
+    if (!isAuthorized) return;
 
     try {
       setPayingSalary(true);
