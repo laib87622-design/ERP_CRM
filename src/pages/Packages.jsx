@@ -733,6 +733,107 @@ const normalizeTripTemplate = (row) => {
   };
 };
 
+const createLocalId = (prefix) => `${prefix}-${Date.now()}-${Math.random()}`;
+
+const cloneCustomPricesWithNewIds = (customPrices = []) =>
+  (Array.isArray(customPrices) ? customPrices : []).map((price) => ({
+    ...price,
+    id: createLocalId('custom-price'),
+  }));
+
+const cloneFlightDetailsWithNewIds = (value) => {
+  const flightDetails = normalizeTicketFlightDetails(value || createDefaultFlightDetails());
+
+  const cloneStops = (stops) =>
+    (Array.isArray(stops) ? stops : []).map((stop) => ({
+      ...stop,
+      _id: createLocalId('stop'),
+    }));
+
+  return {
+    ...flightDetails,
+    outbound: {
+      ...flightDetails.outbound,
+      stops: cloneStops(flightDetails.outbound?.stops),
+    },
+    return: {
+      ...flightDetails.return,
+      stops: cloneStops(flightDetails.return?.stops),
+    },
+    stops: cloneStops(flightDetails.stops),
+    multi_city_legs: (flightDetails.multi_city_legs || []).map((leg) => ({
+      ...leg,
+      id: createLocalId('ticket-leg'),
+      stops: cloneStops(leg?.stops),
+    })),
+  };
+};
+
+const buildCopyDraft = (source) => {
+  const normalized = normalizeTripTemplate(source);
+
+  const travelIdMap = new Map();
+  const travelSchedule = (normalized.travel_schedule || []).map((travel) => {
+    const nextId = createLocalId('travel');
+    travelIdMap.set(travel.id, nextId);
+    return {
+      ...travel,
+      id: nextId,
+      custom_prices: cloneCustomPricesWithNewIds(travel.custom_prices),
+    };
+  });
+
+  const syncedTravelSchedule = syncTravelDateLabels(travelSchedule);
+
+  const hotelIdMap = new Map();
+  const hotels = (normalized.hotels || []).map((hotel) => {
+    const nextId = createLocalId('hotel');
+    hotelIdMap.set(hotel.id, nextId);
+    return {
+      ...hotel,
+      id: nextId,
+      travel_date_id: hotel.travel_date_id ? travelIdMap.get(hotel.travel_date_id) || null : null,
+      replacement_for_hotel_id: hotel.replacement_for_hotel_id
+        ? hotelIdMap.get(hotel.replacement_for_hotel_id) || null
+        : null,
+      custom_prices: cloneCustomPricesWithNewIds(hotel.custom_prices),
+    };
+  });
+
+  return {
+    ...normalized,
+    id: null,
+    label: `${normalized.label || ''} (Copy)`.trim(),
+    brochure_url: '',
+    photos: [],
+    travel_schedule: syncedTravelSchedule,
+    hotels: syncHotelTravelDateLabels(syncedTravelSchedule, hotels),
+    inclusions: (normalized.inclusions || []).map((item) => ({ ...item, id: createLocalId('entry') })),
+    exclusions: (normalized.exclusions || []).map((item) => ({ ...item, id: createLocalId('entry') })),
+    itinerary_days: (normalized.itinerary_days || []).map((day) => ({ ...day, id: createLocalId('itinerary') })),
+    flight_details: cloneFlightDetailsWithNewIds(normalized.flight_details),
+  };
+};
+
+const getCopyRowSummary = (row) => {
+  const templateType = String(row?.template_type || 'trip');
+
+  if (templateType === 'ticket_promotion') {
+    const flightDetails = parseJsonObject(row?.flight_details, {});
+    const journey = flightDetails?.outbound?.journey || flightDetails?.journey || {};
+    return [journey.airline, formatPackageDate(journey.departure_time)].filter(Boolean).join(' • ');
+  }
+
+  if (templateType === 'hotel_promotion') {
+    const hotelDetails = parseJsonObject(row?.hotel_details, {});
+    return [hotelDetails.hotel_name, formatPackageDate(hotelDetails.start_date)].filter(Boolean).join(' • ');
+  }
+
+  const travelDates = parseJsonArray(row?.travel_schedule);
+  const firstDeparture = row?.departure_date || travelDates[0]?.departure_date || '';
+  return formatPackageDate(firstDeparture);
+};
+
 export default function Packages({ language = 'en' }) {
   const [role, setRole] = useState('viewer');
   const [templates, setTemplates] = useState([]);
@@ -756,6 +857,9 @@ export default function Packages({ language = 'en' }) {
   const [showCountryInput, setShowCountryInput] = useState(false);
   const [availableTags, setAvailableTags] = useState(['B2B', 'VIP', 'Agencies', 'Families']);
   const [customTagInput, setCustomTagInput] = useState(null);
+  const [copyPickerOpen, setCopyPickerOpen] = useState(false);
+  const [copyPickerRows, setCopyPickerRows] = useState([]);
+  const [copyPickerLoading, setCopyPickerLoading] = useState(false);
   const [toast, setToast] = useState('');
   const [loading, setLoading] = useState(true);
   const [generatingBrochureId, setGeneratingBrochureId] = useState(null);
@@ -1076,6 +1180,62 @@ export default function Packages({ language = 'en' }) {
     setStep(1);
     setActiveTab('Basic Info');
     setShowCountryInput(true);
+    setIsFormOpen(true);
+  };
+
+  const openCopyPicker = async () => {
+    if (!canWrite) {
+      setToast(language === 'en' ? 'Viewer role cannot create templates.' : 'لا يمكن للمشاهد إنشاء القوالب.');
+      return;
+    }
+
+    const packageKind = selectedType || 'trip';
+
+    setCopyPickerOpen(true);
+    setCopyPickerRows([]);
+    setCopyPickerLoading(true);
+
+    if (!supabase) {
+      setCopyPickerLoading(false);
+      return;
+    }
+
+    try {
+      let query = supabase
+        .from('package_templates')
+        .select('id, label, template_type, country, destination, departure_date, return_date, travel_schedule, flight_details, hotel_details')
+        .order('created_at', { ascending: false });
+
+      query = packageKind === 'trip'
+        ? query.or('template_type.eq.trip,template_type.is.null')
+        : query.eq('template_type', packageKind);
+
+      const { data, error } = await query;
+
+      if (error) throw error;
+      setCopyPickerRows(data || []);
+    } catch (error) {
+      setToast(error?.message || (language === 'en' ? 'Unable to load packages to copy.' : 'تعذر تحميل الباقات للنسخ.'));
+      setCopyPickerRows([]);
+    } finally {
+      setCopyPickerLoading(false);
+    }
+  };
+
+  const openCopy = (item) => {
+    if (!canWrite) {
+      setToast(language === 'en' ? 'Viewer role cannot create templates.' : 'لا يمكن للمشاهد إنشاء القوالب.');
+      return;
+    }
+
+    const source = templates.find((template) => template.id === item.id) || item;
+
+    setEditingId(null);
+    setDraft(buildCopyDraft(source));
+    setStep(1);
+    setActiveTab('Basic Info');
+    setShowCountryInput(Boolean(!source.country || !countryOptions.includes(source.country)));
+    setCopyPickerOpen(false);
     setIsFormOpen(true);
   };
 
@@ -3234,6 +3394,14 @@ export default function Packages({ language = 'en' }) {
             <button
               type="button"
               disabled={!canWrite}
+              onClick={openCopyPicker}
+              className="whitespace-nowrap rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45"
+            >
+              Copy from existing
+            </button>
+            <button
+              type="button"
+              disabled={!canWrite}
               onClick={openCreate}
               className="whitespace-nowrap rounded-lg bg-slate-900 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45"
             >
@@ -4042,6 +4210,59 @@ export default function Packages({ language = 'en' }) {
                     ))}
                   </div>
                 </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {copyPickerOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm">
+          <div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl">
+            <div className="mb-5 flex items-center justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#c9a84c]">Copy from existing</p>
+                <h3 className="mt-2 text-2xl font-serif text-[#0a1120]">
+                  {packageTypeCards.find((card) => card.key === selectedType)?.label || 'Package'} packages
+                </h3>
+              </div>
+
+              <button type="button" onClick={() => setCopyPickerOpen(false)} className="rounded-lg p-2 text-slate-500 hover:bg-slate-100">
+                <X size={18} />
+              </button>
+            </div>
+
+            {copyPickerLoading ? (
+              <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-10 text-center text-sm text-slate-500">
+                Loading packages...
+              </div>
+            ) : copyPickerRows.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-10 text-center text-sm text-slate-500">
+                {language === 'en'
+                  ? `No ${packageTypeCards.find((card) => card.key === selectedType)?.label || 'package'} packages to copy yet.`
+                  : `لا توجد ${packageTypeCards.find((card) => card.key === selectedType)?.labelAr || 'باقات'} قابلة للنسخ بعد.`}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {copyPickerRows.map((row) => {
+                  const rowCountry = parseJsonObject(row.hotel_details, {}).country || row.country || '';
+                  const rowMeta = [rowCountry, row.destination, getCopyRowSummary(row)].filter(Boolean).join(' • ');
+
+                  return (
+                    <button
+                      key={row.id}
+                      type="button"
+                      onClick={() => openCopy(row)}
+                      className="flex w-full items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left transition hover:border-[#c9a84c] hover:bg-slate-50"
+                    >
+                      <span>
+                        <span className="block text-sm font-semibold text-[#0a1120]">{row.label || 'Untitled package'}</span>
+                        {rowMeta && <span className="mt-0.5 block text-xs text-slate-500">{rowMeta}</span>}
+                      </span>
+                      <ChevronRight size={18} className="shrink-0 text-[#c9a84c]" />
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
