@@ -34,6 +34,72 @@ const packageTypeCards = [
   { key: 'hotel_promotion', label: 'Hotel Promotion', labelAr: 'ترويج الفنادق', icon: '🏨' },
 ];
 
+// Columns used by the list, filters, details modal, brochures and ticket modal.
+// photos and brochure_url are intentionally excluded (photos are huge base64 blobs).
+const PACKAGE_LIST_COLUMNS = [
+  'id',
+  'template_type',
+  'label',
+  'country',
+  'destination',
+  'location',
+  'departure_date',
+  'return_date',
+  'departure_point',
+  'transport',
+  'duration_nights',
+  'service_ref',
+  'is_available',
+  'selling_price',
+  'stock',
+  'travel_schedule',
+  'hotels',
+  'flight_details',
+  'hotel_details',
+  'inclusions',
+  'exclusions',
+  'cancellation_policy',
+  'good_to_know',
+  'target_tags',
+].join(', ');
+
+// Every column normalizeTripTemplate needs for the create/edit form, minus photos.
+const PACKAGE_FORM_COLUMNS = [
+  'template_type',
+  'type',
+  'label',
+  'service_ref',
+  'supplier_id',
+  'supplier_drive_link',
+  'country',
+  'destination',
+  'location',
+  'distance_from_haram',
+  'departure_date',
+  'return_date',
+  'duration_nights',
+  'departure_point',
+  'transport',
+  'plan_de_vol',
+  'travel_schedule',
+  'hotels',
+  'inclusions',
+  'exclusions',
+  'transfert',
+  'excursion',
+  'visa_included',
+  'assurance',
+  'selling_price',
+  'stock',
+  'flight_details',
+  'hotel_details',
+  'target_tags',
+  'is_available',
+  'cancellation_policy',
+  'good_to_know',
+  'brochure_url',
+].join(', ');
+
 const createTravelDate = (index = 0) => ({
   id: `travel-${Date.now()}-${Math.random()}`,
   label: `Travel Date ${index + 1}`,
@@ -815,6 +881,17 @@ const buildCopyDraft = (source) => {
   };
 };
 
+const fetchTemplateForForm = async (templateId) => {
+  const { data, error } = await supabase
+    .from('package_templates')
+    .select(PACKAGE_FORM_COLUMNS)
+    .eq('id', templateId)
+    .single();
+
+  if (error) throw error;
+  return data;
+};
+
 const getCopyRowSummary = (row) => {
   const templateType = String(row?.template_type || 'trip');
 
@@ -974,16 +1051,6 @@ export default function Packages({ language = 'en' }) {
   }, []);
 
   useEffect(() => {
-    if (!editingId || !templates.length) return;
-
-    const currentTemplate = templates.find((item) => item.id === editingId);
-    if (!currentTemplate || currentTemplate.template_type !== 'ticket_promotion') return;
-
-    const initialData = normalizeTripTemplate(currentTemplate);
-    setDraft(initialData);
-  }, [editingId, templates]);
-
-  useEffect(() => {
     if (!draft.include_itinerary) return;
 
     const nextPlan = (draft.itinerary_days || [])
@@ -1017,7 +1084,7 @@ export default function Packages({ language = 'en' }) {
 
       try {
         const [templatesRes, serviceTypesRes, suppliersRes] = await Promise.all([
-          supabase.from('package_templates').select('*').order('created_at', { ascending: false }),
+          supabase.from('package_templates').select(PACKAGE_LIST_COLUMNS).order('created_at', { ascending: false }),
           supabase.from('service_types').select('id, name').order('name', { ascending: true }),
           supabase.from('suppliers').select('id, name').order('name', { ascending: true }),
         ]);
@@ -1222,35 +1289,55 @@ export default function Packages({ language = 'en' }) {
     }
   };
 
-  const openCopy = (item) => {
+  const openCopy = async (item) => {
     if (!canWrite) {
       setToast(language === 'en' ? 'Viewer role cannot create templates.' : 'لا يمكن للمشاهد إنشاء القوالب.');
       return;
     }
 
-    const source = templates.find((template) => template.id === item.id) || item;
+    if (!supabase) {
+      setToast(language === 'en' ? 'Supabase is not configured.' : 'لم يتم تكوين Supabase.');
+      return;
+    }
 
-    setEditingId(null);
-    setDraft(buildCopyDraft(source));
-    setStep(1);
-    setActiveTab('Basic Info');
-    setShowCountryInput(Boolean(!source.country || !countryOptions.includes(source.country)));
-    setCopyPickerOpen(false);
-    setIsFormOpen(true);
+    try {
+      const source = await fetchTemplateForForm(item.id);
+
+      setEditingId(null);
+      setDraft(buildCopyDraft(source));
+      setStep(1);
+      setActiveTab('Basic Info');
+      setShowCountryInput(Boolean(!source.country || !countryOptions.includes(source.country)));
+      setCopyPickerOpen(false);
+      setIsFormOpen(true);
+    } catch (error) {
+      setToast(error?.message || (language === 'en' ? 'Unable to load package to copy.' : 'تعذر تحميل الباقة للنسخ.'));
+    }
   };
 
-  const openEdit = (item) => {
+  const openEdit = async (item) => {
     if (!canWrite) {
       setToast(language === 'en' ? 'Viewer role cannot edit templates.' : 'لا يمكن للمشاهد تعديل القوالب.');
       return;
     }
 
-    setEditingId(item.id);
-    setDraft(normalizeTripTemplate(item));
-    setStep(1);
-    setActiveTab('Basic Info');
-    setShowCountryInput(Boolean(!item.country || !countryOptions.includes(item.country)));
-    setIsFormOpen(true);
+    if (!supabase) {
+      setToast(language === 'en' ? 'Supabase is not configured.' : 'لم يتم تكوين Supabase.');
+      return;
+    }
+
+    try {
+      const source = await fetchTemplateForForm(item.id);
+
+      setEditingId(item.id);
+      setDraft(normalizeTripTemplate(source));
+      setStep(1);
+      setActiveTab('Basic Info');
+      setShowCountryInput(Boolean(!source.country || !countryOptions.includes(source.country)));
+      setIsFormOpen(true);
+    } catch (error) {
+      setToast(error?.message || (language === 'en' ? 'Unable to load package.' : 'تعذر تحميل الباقة.'));
+    }
   };
 
   const handleDeletePackage = async (packageId) => {
@@ -1648,7 +1735,6 @@ export default function Packages({ language = 'en' }) {
           }))
           .filter((option) => option.name || option.price !== ''),
       }))),
-      photos: JSON.stringify(isTicketPromotionPackage ? [] : (draft.photos || []).filter(Boolean)),
       inclusions: JSON.stringify(isTicketPromotionPackage ? [] : (draft.inclusions || []).map((item) => item.value?.trim()).filter(Boolean)),
       exclusions: JSON.stringify(isTicketPromotionPackage ? [] : (draft.exclusions || []).map((item) => item.value?.trim()).filter(Boolean)),
       transfert: Boolean(isTicketPromotionPackage ? false : draft.transfert),
@@ -1672,15 +1758,15 @@ export default function Packages({ language = 'en' }) {
           .from('package_templates')
           .update(record)
           .eq('id', editingId)
-          .select('*')
+          .select(PACKAGE_LIST_COLUMNS)
           .single();
         return { data, error };
       }
 
       const { data, error } = await supabase
         .from('package_templates')
-        .insert([record])
-        .select('*')
+        .insert([{ ...record, photos: JSON.stringify([]) }])
+        .select(PACKAGE_LIST_COLUMNS)
         .single();
       return { data, error };
     };
@@ -1702,7 +1788,7 @@ export default function Packages({ language = 'en' }) {
           : [savedTemplate, ...previous]
       ));
 
-      const { data, error: refetchError } = await supabase.from('package_templates').select('*').order('created_at', { ascending: false });
+      const { data, error: refetchError } = await supabase.from('package_templates').select(PACKAGE_LIST_COLUMNS).order('created_at', { ascending: false });
 
       if (!refetchError) {
         setTemplates((data || []).map((item) => normalizeTripTemplate(item)));
