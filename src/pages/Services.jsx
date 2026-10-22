@@ -206,7 +206,7 @@ export default function Services({ language = 'en' }) {
 
     const { data, error: fetchError } = await supabase
       .from('client_services')
-      .select('id, client_id, template_id, stages_data, created_at, clients(full_name), service_templates(title, country_id, visa_type_id, service_stages(id, service_steps(id, service_items(id, standard_note, estimated_price))))')
+      .select('id, client_id, template_id, stages_data, created_at, clients(full_name), service_templates(title, country_id, visa_type_id, professional_status, service_stages(id, service_steps(id, service_items(id, standard_note, estimated_price))))')
       .order('created_at', { ascending: false });
 
     if (fetchError) throw fetchError;
@@ -546,9 +546,28 @@ export default function Services({ language = 'en' }) {
       setError('');
       setSaveMessage('');
 
+      const assignedTemplate = selectedClientService.service_templates;
+      if (!assignedTemplate?.country_id || !assignedTemplate?.visa_type_id || !assignedTemplate?.professional_status) {
+        throw new Error('The assigned service is missing its template matrix, so it cannot be matched to a master template.');
+      }
+
+      const { data: masterTemplate, error: masterTemplateError } = await supabase
+        .from('service_templates')
+        .select('id')
+        .eq('country_id', assignedTemplate.country_id)
+        .eq('visa_type_id', assignedTemplate.visa_type_id)
+        .eq('professional_status', assignedTemplate.professional_status)
+        .is('client_id', null)
+        .maybeSingle();
+
+      if (masterTemplateError) throw masterTemplateError;
+      if (!masterTemplate) {
+        throw new Error('No master template was found for this assigned service. Check its country, visa type, and professional status.');
+      }
+
       const templateStages = await fetchTemplateWorkflow({
         supabaseClient: supabase,
-        templateId: selectedClientService.template_id,
+        templateId: masterTemplate.id,
       });
       const mergedStages = mergeClientWorkflowWithTemplate(
         selectedClientService.stages_data || [],
