@@ -493,8 +493,12 @@ DECLARE
   stage_record JSONB;
   step_record JSONB;
   item_record JSONB;
-  inserted_stage_id UUID;
-  inserted_step_id UUID;
+  v_stage_id UUID;
+  v_step_id UUID;
+  v_item_id UUID;
+  stage_ids UUID[] := ARRAY[]::UUID[];
+  step_ids UUID[];
+  item_ids UUID[];
   stage_index INTEGER := 0;
   step_index INTEGER;
   item_index INTEGER;
@@ -533,9 +537,6 @@ BEGIN
     RAISE EXCEPTION 'Template % does not exist.', p_template_id;
   END IF;
 
-  DELETE FROM service_stages
-  WHERE service_template_id = p_template_id;
-
   FOR stage_record IN
     SELECT value FROM jsonb_array_elements(p_stages) AS stage_rows(value)
   LOOP
@@ -547,11 +548,30 @@ BEGIN
       RAISE EXCEPTION 'Steps for stage "%" must be a JSON array.', stage_title;
     END IF;
 
-    INSERT INTO service_stages (service_template_id, title, sort_order)
-    VALUES (p_template_id, stage_title, stage_index)
-    RETURNING id INTO inserted_stage_id;
+    v_stage_id := NULLIF(stage_record->>'id', '')::UUID;
+    IF v_stage_id IS NOT NULL THEN
+      IF v_stage_id = ANY(stage_ids) THEN
+        RAISE EXCEPTION 'Stage id % appears more than once.', v_stage_id;
+      END IF;
+
+      UPDATE service_stages
+      SET title = stage_title,
+          sort_order = stage_index
+      WHERE id = v_stage_id
+        AND service_template_id = p_template_id;
+
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'Stage id % does not belong to template %.', v_stage_id, p_template_id;
+      END IF;
+    ELSE
+      INSERT INTO service_stages (service_template_id, title, sort_order)
+      VALUES (p_template_id, stage_title, stage_index)
+      RETURNING id INTO v_stage_id;
+    END IF;
+    stage_ids := array_append(stage_ids, v_stage_id);
 
     step_index := 0;
+    step_ids := ARRAY[]::UUID[];
     FOR step_record IN
       SELECT value
       FROM jsonb_array_elements(COALESCE(stage_record->'steps', '[]'::jsonb)) AS step_rows(value)
@@ -564,11 +584,30 @@ BEGIN
         RAISE EXCEPTION 'Items for step "%" must be a JSON array.', step_title;
       END IF;
 
-      INSERT INTO service_steps (stage_id, title, sort_order)
-      VALUES (inserted_stage_id, step_title, step_index)
-      RETURNING id INTO inserted_step_id;
+      v_step_id := NULLIF(step_record->>'id', '')::UUID;
+      IF v_step_id IS NOT NULL THEN
+        IF v_step_id = ANY(step_ids) THEN
+          RAISE EXCEPTION 'Step id % appears more than once in stage %.', v_step_id, v_stage_id;
+        END IF;
+
+        UPDATE service_steps
+        SET title = step_title,
+            sort_order = step_index
+        WHERE id = v_step_id
+          AND stage_id = v_stage_id;
+
+        IF NOT FOUND THEN
+          RAISE EXCEPTION 'Step id % does not belong to stage %.', v_step_id, v_stage_id;
+        END IF;
+      ELSE
+        INSERT INTO service_steps (stage_id, title, sort_order)
+        VALUES (v_stage_id, step_title, step_index)
+        RETURNING id INTO v_step_id;
+      END IF;
+      step_ids := array_append(step_ids, v_step_id);
 
       item_index := 0;
+      item_ids := ARRAY[]::UUID[];
       FOR item_record IN
         SELECT value
         FROM jsonb_array_elements(COALESCE(step_record->'items', '[]'::jsonb)) AS item_rows(value)
@@ -584,33 +623,68 @@ BEGIN
         END IF;
         item_is_done := COALESCE((item_record->>'is_done')::BOOLEAN, FALSE);
 
-        INSERT INTO service_items (
-          step_id,
-          title,
-          standard_note,
-          estimated_price,
-          drive_url,
-          is_done,
-          sort_order
-        )
-        VALUES (
-          inserted_step_id,
-          item_title,
-          COALESCE(item_record->>'standard_note', ''),
-          item_price,
-          NULLIF(item_record->>'drive_url', ''),
-          item_is_done,
-          item_index
-        );
+        v_item_id := NULLIF(item_record->>'id', '')::UUID;
+        IF v_item_id IS NOT NULL THEN
+          IF v_item_id = ANY(item_ids) THEN
+            RAISE EXCEPTION 'Item id % appears more than once in step %.', v_item_id, v_step_id;
+          END IF;
+
+          UPDATE service_items
+          SET title = item_title,
+              standard_note = COALESCE(item_record->>'standard_note', ''),
+              estimated_price = item_price,
+              drive_url = NULLIF(item_record->>'drive_url', ''),
+              is_done = item_is_done,
+              sort_order = item_index
+          WHERE id = v_item_id
+            AND step_id = v_step_id;
+
+          IF NOT FOUND THEN
+            RAISE EXCEPTION 'Item id % does not belong to step %.', v_item_id, v_step_id;
+          END IF;
+        ELSE
+          INSERT INTO service_items (
+            step_id,
+            title,
+            standard_note,
+            estimated_price,
+            drive_url,
+            is_done,
+            sort_order
+          )
+          VALUES (
+            v_step_id,
+            item_title,
+            COALESCE(item_record->>'standard_note', ''),
+            item_price,
+            NULLIF(item_record->>'drive_url', ''),
+            item_is_done,
+            item_index
+          )
+          RETURNING id INTO v_item_id;
+        END IF;
+        item_ids := array_append(item_ids, v_item_id);
 
         item_index := item_index + 1;
       END LOOP;
 
+      DELETE FROM service_items
+      WHERE step_id = v_step_id
+        AND id <> ALL(item_ids);
+
       step_index := step_index + 1;
     END LOOP;
 
+    DELETE FROM service_steps
+    WHERE stage_id = v_stage_id
+      AND id <> ALL(step_ids);
+
     stage_index := stage_index + 1;
   END LOOP;
+
+  DELETE FROM service_stages
+  WHERE service_template_id = p_template_id
+    AND id <> ALL(stage_ids);
 END;
 $$;
 
@@ -4639,5 +4713,3 @@ ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin IN SCHEMA public GRANT ALL ON T
 --
 -- PostgreSQL database dump complete
 --
-
-

@@ -8,6 +8,7 @@ export const normalizeTemplateWorkflow = (workflow = []) => {
     if (!stageTitle) throw new Error(`Stage ${stageIndex + 1} must have a title.`);
 
     return {
+      ...(stage.id ? { id: stage.id } : {}),
       title: stageTitle,
       sort_order: stageIndex,
       steps: (stage.steps || []).map((step, stepIndex) => {
@@ -15,6 +16,7 @@ export const normalizeTemplateWorkflow = (workflow = []) => {
         if (!stepTitle) throw new Error(`Step ${stepIndex + 1} in "${stageTitle}" must have a title.`);
 
         return {
+          ...(step.id ? { id: step.id } : {}),
           title: stepTitle,
           sort_order: stepIndex,
           items: (step.items || []).map((item, itemIndex) => {
@@ -27,6 +29,7 @@ export const normalizeTemplateWorkflow = (workflow = []) => {
             }
 
             return {
+              ...(item.id ? { id: item.id } : {}),
               title: itemTitle,
               standard_note: String(item.standard_note || '').trim(),
               estimated_price: estimatedPrice,

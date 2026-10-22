@@ -36,14 +36,17 @@ describe('normalizeTemplateWorkflow', () => {
   it('normalizes nested titles, item metadata, and ordering', () => {
     expect(normalizeTemplateWorkflow(workflowFixture)).toEqual([
       {
+        id: 'old-stage-id',
         title: 'Documents',
         sort_order: 0,
         steps: [
           {
+            id: 'old-step-id',
             title: 'Application',
             sort_order: 0,
             items: [
               {
+                id: 'old-item-id',
                 title: 'Passport copy',
                 standard_note: 'Check validity',
                 estimated_price: 1250,
@@ -56,6 +59,20 @@ describe('normalizeTemplateWorkflow', () => {
         ],
       },
     ]);
+  });
+
+  it('omits IDs for new records so Supabase can generate them', () => {
+    const [stage] = normalizeTemplateWorkflow([{
+      title: 'New stage',
+      steps: [{
+        title: 'New step',
+        items: [{ title: 'New item' }],
+      }],
+    }]);
+
+    expect(stage).not.toHaveProperty('id');
+    expect(stage.steps[0]).not.toHaveProperty('id');
+    expect(stage.steps[0].items[0]).not.toHaveProperty('id');
   });
 
   it('rejects invalid nested titles and prices before saving', () => {
@@ -88,6 +105,13 @@ describe('saveTemplateWorkflow', () => {
     }));
     expect(stages[0].steps[0].items[0].standard_note).toBe('Check validity');
     expect(stages[0].steps[0].items[0].estimated_price).toBe(1250);
+    expect(stages[0]).toMatchObject({
+      id: 'old-stage-id',
+      steps: [{
+        id: 'old-step-id',
+        items: [{ id: 'old-item-id' }],
+      }],
+    });
   });
 
   it('surfaces database errors without retrying non-atomic writes', async () => {
