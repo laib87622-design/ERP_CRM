@@ -24,7 +24,8 @@ import TripBrochure from '../components/TripBrochure';
 import HajjOmraBrochure from '../components/HajjOmraBrochure';
 import HotelPromotionBrochure from '../components/HotelPromotionBrochure';
 
-const mealTypeOptions = ['Petit Déjeuner', 'Demi-Pension', 'Pension Complète', 'All Inclusive Soft'];
+const roomOnlyMealType = 'Room Only (No meals included)';
+const mealTypeOptions = ['Petit Déjeuner', 'Demi-Pension', 'Pension Complète', 'All Inclusive', 'All Inclusive Soft', roomOnlyMealType];
 const defaultCountryOptions = ['Turkey', 'Tunisia', 'Egypt', 'Algeria', 'France', 'United Arab Emirates', 'Qatar', 'Saudi Arabia'];
 
 const packageTypeCards = [
@@ -1722,7 +1723,7 @@ export default function Packages({ language = 'en' }) {
         assigned_nights_dates: hotel.assigned_nights_dates || '',
         is_primary: Boolean(hotel.is_primary),
         replacement_for_hotel_id: hotel.is_primary === false ? (hotel.replacement_for_hotel_id || null) : null,
-        meals: Boolean(hotel.meal_type),
+        meals: Boolean(hotel.meals),
         meal_type: hotel.meal_type || 'Petit Déjeuner',
         prix_single: hotel.prix_single ?? '',
         prix_double: hotel.prix_double ?? '',
@@ -2740,7 +2741,7 @@ export default function Packages({ language = 'en' }) {
                         <button
                           key={option}
                           type="button"
-                          onClick={() => setDraft((prev) => ({ ...prev, hotels: prev.hotels.map((item) => item.id === hotel.id ? { ...item, meal_type: option, meals: true } : item) }))}
+                          onClick={() => setDraft((prev) => ({ ...prev, hotels: prev.hotels.map((item) => item.id === hotel.id ? { ...item, meal_type: option, meals: option !== roomOnlyMealType } : item) }))}
                           className={`rounded-xl border px-3 py-2 text-xs font-medium ${hotel.meal_type === option ? 'border-brand-gold bg-brand-gold/10 text-brand-navy' : 'border-slate-200 bg-white text-slate-600'}`}
                         >
                           {option}
@@ -3224,11 +3225,11 @@ export default function Packages({ language = 'en' }) {
                     <div className="rounded-xl border border-slate-200 bg-white p-3">
                       <label className="mb-2 block text-sm font-medium text-slate-700">Meal Type</label>
                       <div className="flex flex-wrap gap-2">
-                        {['Petit Déjeuner', 'Demi-Pension', 'Pension Complète', 'All Inclusive', 'All Inclusive Soft'].map((option) => (
+                        {mealTypeOptions.map((option) => (
                           <button
                             key={option}
                             type="button"
-                            onClick={() => setDraft((prev) => ({ ...prev, hotels: prev.hotels.map((item) => item.id === hotel.id ? { ...item, meal_type: option, meals: true } : item) }))}
+                            onClick={() => setDraft((prev) => ({ ...prev, hotels: prev.hotels.map((item) => item.id === hotel.id ? { ...item, meal_type: option, meals: option !== roomOnlyMealType } : item) }))}
                             className={`rounded-xl border px-3 py-2 text-xs font-medium ${hotel.meal_type === option ? 'border-brand-gold bg-brand-gold/10 text-brand-navy' : 'border-slate-200 bg-white text-slate-600'}`}
                           >
                             {option}

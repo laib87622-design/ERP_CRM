@@ -20,6 +20,14 @@ const getListValues = (value) => parseBrochureArray(value)
   .map((item) => typeof item === 'string' ? item : item?.value || item?.label || '')
   .filter(Boolean);
 
+const getTextLines = (value) => {
+  if (Array.isArray(value)) {
+    return value.map((item) => typeof item === 'string' ? item : item?.value || item?.label || '').filter(Boolean);
+  }
+
+  return String(value || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+};
+
 const HajjOmraBrochure = forwardRef(({ packageData }, ref) => {
   if (!packageData) return null;
 
@@ -38,6 +46,8 @@ const HajjOmraBrochure = forwardRef(({ packageData }, ref) => {
   const inclusions = getListValues(packageData.inclusions);
   const exclusions = getListValues(packageData.exclusions);
   const itineraryDays = getBrochureItineraryDays(packageData);
+  const cancellationRules = getTextLines(packageData.cancellation_policy);
+  const goodToKnowNotes = getTextLines(packageData.good_to_know);
   const formatPrice = (value) => value === '' || value === null || value === undefined
     ? '---'
     : Number.isFinite(Number(value)) ? Number(value).toLocaleString('ar-DZ') : String(value);
@@ -120,20 +130,6 @@ const HajjOmraBrochure = forwardRef(({ packageData }, ref) => {
           </div>
         </div>
 
-        {itineraryDays.length > 0 && (
-          <section className="mb-5">
-            <h3 className="mb-2 border-b border-amber-900/20 pb-2 text-lg font-bold text-amber-900">برنامج الرحلة اليومي</h3>
-            <div className="space-y-2">
-              {itineraryDays.map((day, dayIndex) => (
-                <article key={`${day.label}-${dayIndex}`} className="break-inside-avoid rounded-lg border border-amber-900/10 bg-white/80 p-3">
-                  <h4 className="mb-1 text-sm font-bold text-amber-900">{day.label}</h4>
-                  {day.description && <p className="whitespace-pre-wrap text-xs leading-5 text-slate-700">{day.description}</p>}
-                </article>
-              ))}
-            </div>
-          </section>
-        )}
-
         <div className="mb-5">
           <h3 className="mb-2 border-b border-amber-900/20 pb-2 text-lg font-bold text-amber-900">الفنادق والأسعار</h3>
           {hotels.length ? (
@@ -197,6 +193,41 @@ const HajjOmraBrochure = forwardRef(({ packageData }, ref) => {
               </div>
             )}
           </div>
+        )}
+
+        {(cancellationRules.length > 0 || goodToKnowNotes.length > 0) && (
+          <div className="mt-5 grid grid-cols-2 gap-6 text-xs text-slate-700">
+            {cancellationRules.length > 0 && (
+              <section className="rounded-xl border border-amber-900/10 bg-amber-50/50 p-4">
+                <h4 className="mb-2 font-bold text-amber-900">سياسة الإلغاء</h4>
+                <ul className="list-disc space-y-1.5 pr-4">
+                  {cancellationRules.map((rule, index) => <li key={`${rule}-${index}`}>{rule}</li>)}
+                </ul>
+              </section>
+            )}
+            {goodToKnowNotes.length > 0 && (
+              <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <h4 className="mb-2 font-bold text-slate-800">معلومات هامة</h4>
+                <ul className="list-disc space-y-1.5 pr-4">
+                  {goodToKnowNotes.map((note, index) => <li key={`${note}-${index}`}>{note}</li>)}
+                </ul>
+              </section>
+            )}
+          </div>
+        )}
+
+        {itineraryDays.length > 0 && (
+          <section className="mt-5">
+            <h3 className="mb-2 border-b border-amber-900/20 pb-2 text-lg font-bold text-amber-900">برنامج الرحلة اليومي</h3>
+            <div className="space-y-2">
+              {itineraryDays.map((day, dayIndex) => (
+                <article key={`${day.label}-${dayIndex}`} className="break-inside-avoid rounded-lg border border-amber-900/10 bg-white/80 p-3">
+                  <h4 className="mb-1 text-sm font-bold text-amber-900">{day.label}</h4>
+                  {day.description && <p className="whitespace-pre-wrap text-xs leading-5 text-slate-700">{day.description}</p>}
+                </article>
+              ))}
+            </div>
+          </section>
         )}
       </div>
     </div>

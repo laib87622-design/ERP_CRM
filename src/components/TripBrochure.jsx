@@ -79,20 +79,6 @@ const TripBrochure = forwardRef(({ packageData }, ref) => {
         </div>
       </div>
 
-      {itineraryDays.length > 0 && (
-        <section className="mb-8">
-          <h3 className="mb-4 border-b border-slate-200 pb-2 text-lg font-semibold uppercase tracking-wide">Itinerary</h3>
-          <div className="space-y-3">
-            {itineraryDays.map((day, index) => (
-              <article key={`${day.label}-${index}`} className="break-inside-avoid rounded-lg border border-slate-100 bg-slate-50 p-4">
-                <h4 className="mb-1 font-semibold text-slate-800">{day.label}</h4>
-                <p className="whitespace-pre-wrap text-sm leading-6 text-slate-600">{day.description}</p>
-              </article>
-            ))}
-          </div>
-        </section>
-      )}
-
       <section className="mb-8">
         <h3 className="mb-4 border-b border-slate-200 pb-2 text-lg font-semibold uppercase tracking-wide">Travel Dates &amp; Pricing</h3>
         <div className="space-y-3">
@@ -229,6 +215,20 @@ const TripBrochure = forwardRef(({ packageData }, ref) => {
           </div>
         )}
       </div>
+
+      {itineraryDays.length > 0 && (
+        <section className="mt-8">
+          <h3 className="mb-4 border-b border-slate-200 pb-2 text-lg font-semibold uppercase tracking-wide">Itinerary</h3>
+          <div className="space-y-3">
+            {itineraryDays.map((day, index) => (
+              <article key={`${day.label}-${index}`} className="break-inside-avoid rounded-lg border border-slate-100 bg-slate-50 p-4">
+                <h4 className="mb-1 font-semibold text-slate-800">{day.label}</h4>
+                <p className="whitespace-pre-wrap text-sm leading-6 text-slate-600">{day.description}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 });
