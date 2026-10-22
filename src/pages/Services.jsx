@@ -76,6 +76,8 @@ const translations = {
     title: 'Visa Workflow',
     clientServicesTab: 'Client Services',
     templatesTab: 'Templates',
+    refreshData: 'Refresh Data',
+    refreshing: 'Refreshing...',
     newClientService: 'Assign Service',
     newTemplate: 'New Template',
     noClientServices: 'No client services assigned yet.',
@@ -86,6 +88,8 @@ const translations = {
     title: 'سير العمل - التأشيرة',
     clientServicesTab: 'خدمات العملاء',
     templatesTab: 'القوالب',
+    refreshData: 'تحديث البيانات',
+    refreshing: 'جارٍ التحديث...',
     newClientService: 'تعيين خدمة',
     newTemplate: 'قالب جديد',
     noClientServices: 'لا توجد خدمات معينة للعملاء بعد.',
@@ -99,6 +103,7 @@ export default function Services({ language = 'en' }) {
 
   const [mode, setMode] = useState('clients'); // 'clients' | 'templates'
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -186,7 +191,7 @@ export default function Services({ language = 'en' }) {
       supabase.from('clients').select('id, full_name').order('full_name', { ascending: true }),
       supabase
         .from('service_templates')
-        .select('id, title, package_id, country_id, visa_type_id, professional_status')
+        .select('*')
         .is('client_id', null)
         .order('title', { ascending: true }),
     ]);
@@ -267,9 +272,9 @@ export default function Services({ language = 'en' }) {
     });
   };
 
-  const loadAll = async () => {
+  const fetchPageData = async ({ showLoading = true } = {}) => {
     try {
-      setLoading(true);
+      if (showLoading) setLoading(true);
       setError('');
 
       if (!supabase) {
@@ -281,32 +286,23 @@ export default function Services({ language = 'en' }) {
     } catch (err) {
       setError(err.message || 'Unable to load services.');
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadAll();
+    fetchPageData();
   }, []);
 
-  useEffect(() => {
-    const fetchMasterTemplates = async () => {
-      if (!supabase) return;
-
-      const { data, error } = await supabase
-        .from('service_templates')
-        .select('*')
-        .is('client_id', null);
-
-      if (error) {
-        console.error('Error fetching templates:', error);
-      } else if (data) {
-        setTemplates(data);
-      }
-    };
-
-    fetchMasterTemplates();
-  }, []);
+  const handleRefreshData = async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      await fetchPageData({ showLoading: false });
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   const selectedClientService = clientServices.find((row) => row.id === selectedClientServiceId) || null;
 
@@ -1639,27 +1635,38 @@ export default function Services({ language = 'en' }) {
           <h2 className="mt-2 font-serif text-3xl text-brand-navy">{t.title}</h2>
         </div>
 
-        <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-brand-card p-1">
+        <div className="flex flex-wrap items-center justify-end gap-2">
           <button
             type="button"
-            onClick={() => setMode('clients')}
-            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition ${
-              mode === 'clients' ? 'bg-brand-navy text-white' : 'text-brand-navy hover:bg-slate-100'
-            }`}
+            onClick={handleRefreshData}
+            disabled={isRefreshing}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <Users size={16} />
-            {t.clientServicesTab}
+            <RefreshCw size={16} className={isRefreshing ? 'animate-spin' : ''} />
+            {isRefreshing ? t.refreshing : t.refreshData}
           </button>
-          <button
-            type="button"
-            onClick={() => setMode('templates')}
-            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition ${
-              mode === 'templates' ? 'bg-brand-navy text-white' : 'text-brand-navy hover:bg-slate-100'
-            }`}
-          >
-            <Layers size={16} />
-            {t.templatesTab}
-          </button>
+          <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-brand-card p-1">
+            <button
+              type="button"
+              onClick={() => setMode('clients')}
+              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition ${
+                mode === 'clients' ? 'bg-brand-navy text-white' : 'text-brand-navy hover:bg-slate-100'
+              }`}
+            >
+              <Users size={16} />
+              {t.clientServicesTab}
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode('templates')}
+              className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition ${
+                mode === 'templates' ? 'bg-brand-navy text-white' : 'text-brand-navy hover:bg-slate-100'
+              }`}
+            >
+              <Layers size={16} />
+              {t.templatesTab}
+            </button>
+          </div>
         </div>
       </div>
 

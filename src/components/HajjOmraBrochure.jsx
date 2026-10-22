@@ -24,6 +24,32 @@ const getListValues = (value) => parseArray(value)
   .map((item) => typeof item === 'string' ? item : item?.value || item?.label || '')
   .filter(Boolean);
 
+const getItineraryDays = (packageData) => {
+  const plan = String(packageData.plan_de_vol || '').trim();
+  if (!packageData.include_itinerary && !plan) return [];
+
+  const days = parseArray(packageData.itinerary_days)
+    .map((day, index) => ({
+      label: day?.label || `اليوم ${index + 1}`,
+      description: day?.description || '',
+    }))
+    .filter((day) => day.label || day.description);
+  if (days.length) return days;
+
+  if (!plan) return [];
+
+  return plan
+    .split(/\r?\n/)
+    .map((line, index) => {
+      const match = line.match(/^(.*?):\s*(.*)$/);
+      return {
+        label: match?.[1]?.trim() || `اليوم ${index + 1}`,
+        description: match?.[2]?.trim() || line.trim(),
+      };
+    })
+    .filter((day) => day.description || day.label);
+};
+
 const HajjOmraBrochure = forwardRef(({ packageData }, ref) => {
   if (!packageData) return null;
 
@@ -41,6 +67,7 @@ const HajjOmraBrochure = forwardRef(({ packageData }, ref) => {
   const hotels = parseArray(packageData.hotels);
   const inclusions = getListValues(packageData.inclusions);
   const exclusions = getListValues(packageData.exclusions);
+  const itineraryDays = getItineraryDays(packageData);
   const formatPrice = (value) => value === '' || value === null || value === undefined
     ? '---'
     : Number.isFinite(Number(value)) ? Number(value).toLocaleString('ar-DZ') : String(value);
@@ -62,7 +89,7 @@ const HajjOmraBrochure = forwardRef(({ packageData }, ref) => {
     <div
       ref={ref}
       dir="rtl"
-      className="relative mx-auto w-[800px] max-w-full overflow-hidden bg-white p-8 text-slate-900 font-['Amiri',serif]"
+      className="relative mx-auto w-[800px] max-w-full bg-white p-8 text-slate-900 font-['Amiri',serif] print:w-full print:max-w-none print:overflow-visible"
       style={{ backgroundImage: `url(${backgroundImage})`, backgroundSize: 'cover', backgroundPosition: 'center', fontFamily: "'Amiri', serif" }}
     >
       <div className="absolute inset-0 z-0 bg-white/95" />
@@ -92,16 +119,56 @@ const HajjOmraBrochure = forwardRef(({ packageData }, ref) => {
           <h3 className="mb-2 border-b border-amber-900/20 pb-2 text-lg font-bold text-amber-900">مواعيد الرحلات</h3>
           <div className="grid grid-cols-[repeat(auto-fit,minmax(130px,1fr))] gap-2">
             {legs.map((leg, legIndex) => (
-              <section key={leg.id || `travel-leg-${legIndex}`} className="min-w-0 rounded-lg border border-amber-900/10 bg-amber-50/30 p-2 text-[10px] leading-4 text-slate-700 break-words whitespace-normal">
+              <section key={leg.id || `travel-leg-${legIndex}`} className="min-w-0 break-inside-avoid rounded-lg border border-amber-900/10 bg-amber-50/30 p-2 text-[10px] leading-4 text-slate-700 break-words whitespace-normal">
                 <p className="mb-1 break-words font-bold text-amber-900">{leg.destination || packageData.destination || `الرحلة ${legIndex + 1}`}</p>
                 <p className="break-words"><strong>من:</strong> {leg.departure_point || packageData.departure_point || '---'}</p>
                 <p className="break-words"><strong>الذهاب:</strong> {leg.departure_date || packageData.departure_date || 'يحدد لاحقاً'}</p>
                 <p className="break-words"><strong>العودة:</strong> {leg.return_date || packageData.return_date || 'يحدد لاحقاً'}</p>
                 <p className="break-words"><strong>النقل:</strong> {leg.transport || packageData.transport || '---'}</p>
+                {([leg.prix_single, leg.prix_double, leg.prix_triple].some((price) => price !== '' && price !== null && price !== undefined)
+                  || parseArray(leg.custom_prices).some((price) => {
+                    const value = price.price ?? price.value ?? price.amount;
+                    return value !== '' && value !== null && value !== undefined;
+                  })) && (
+                  <div className="mt-2 space-y-1 border-t border-amber-900/10 pt-1">
+                    {[['فردي', leg.prix_single], ['ثنائي', leg.prix_double], ['ثلاثي', leg.prix_triple]]
+                      .filter(([, price]) => price !== '' && price !== null && price !== undefined)
+                      .map(([label, price]) => (
+                        <p key={label} className="flex justify-between gap-1 break-words">
+                          <span>{label}:</span>
+                          <strong className="text-amber-900">{formatPrice(price)} دج</strong>
+                        </p>
+                      ))}
+                    {parseArray(leg.custom_prices).map((customPrice, priceIndex) => {
+                      const price = customPrice.price ?? customPrice.value ?? customPrice.amount;
+                      if (price === '' || price === null || price === undefined) return null;
+                      return (
+                        <p key={customPrice.id || `custom-travel-price-${priceIndex}`} className="flex justify-between gap-1 break-words">
+                          <span>{customPrice.name || customPrice.label || customPrice.key || 'سعر خاص'}:</span>
+                          <strong className="text-amber-900">{formatPrice(price)} دج</strong>
+                        </p>
+                      );
+                    })}
+                  </div>
+                )}
               </section>
             ))}
           </div>
         </div>
+
+        {itineraryDays.length > 0 && (
+          <section className="mb-5">
+            <h3 className="mb-2 border-b border-amber-900/20 pb-2 text-lg font-bold text-amber-900">برنامج الرحلة اليومي</h3>
+            <div className="space-y-2">
+              {itineraryDays.map((day, dayIndex) => (
+                <article key={`${day.label}-${dayIndex}`} className="break-inside-avoid rounded-lg border border-amber-900/10 bg-white/80 p-3">
+                  <h4 className="mb-1 text-sm font-bold text-amber-900">{day.label}</h4>
+                  {day.description && <p className="whitespace-pre-wrap text-xs leading-5 text-slate-700">{day.description}</p>}
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
 
         <div className="mb-5">
           <h3 className="mb-2 border-b border-amber-900/20 pb-2 text-lg font-bold text-amber-900">الفنادق والأسعار</h3>

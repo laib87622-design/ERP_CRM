@@ -35,6 +35,19 @@ body {
   color: var(--color-brand-navy);
 }
 
+@media print {
+  @page {
+    size: A4;
+    margin: 10mm;
+  }
+
+  .brochure-print-root {
+    position: static !important;
+    inset: auto !important;
+    overflow: visible !important;
+  }
+}
+
 [data-theme='dark'] {
   background-color: #0a1120;
   color: #e2e8f0;

@@ -4453,7 +4453,7 @@ export default function Packages({ language = 'en' }) {
 
       </div>
       {selectedPkgForPdf && (
-        <div className="hidden print:fixed print:inset-0 print:z-[99999] print:block print:bg-white">
+        <div className="brochure-print-root hidden print:block print:bg-white">
           {String(selectedPkgForPdf.template_type || '').toLowerCase() === 'hotel_promotion'
             ? <HotelPromotionBrochure packageData={selectedPkgForPdf} />
             : ['hajj', 'omra'].includes(String(selectedPkgForPdf.template_type || '').toLowerCase())
