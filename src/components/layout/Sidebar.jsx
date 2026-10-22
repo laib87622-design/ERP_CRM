@@ -59,7 +59,7 @@ export default function Sidebar({ isOpen, ui, isDarkMode, language = 'en', agenc
       teamAccess: 'Team & Access',
     },
     ar: {
-      operations: 'العمليات',
+      operations: ' البنك العمليات',
       finance: 'المالية',
       network: 'الشبكة',
       workflow: 'سير العمل',
