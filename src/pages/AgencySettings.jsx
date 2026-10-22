@@ -117,7 +117,7 @@ const availableModules = [
   { id: 'settings', label: 'Admin Settings' },
 ];
 
-const AGENCY_SETTINGS_ROW_ID = '2bacb327-05a7-43a8-9f40-6d3dbfdbc046';
+const AGENCY_SETTINGS_ROW_ID = 'ce927f54-5d6f-4c5b-9473-d59e37110566';
 
 const queueDueMonthlySalaries = async (supabaseClient, today = new Date()) => {
   const payDay = today.getDate();
