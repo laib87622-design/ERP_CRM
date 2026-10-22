@@ -1,5 +1,10 @@
 import { forwardRef } from 'react';
 import backgroundImage from '../assets/background.jpg';
+import {
+  getBrochureItineraryDays,
+  getBrochureTravelDatePricing,
+  parseBrochureArray,
+} from '../lib/packageBrochureData';
 
 const defaultAgencyInfo = {
   agency_name: 'SEFAR TRAVEL SERVICES',
@@ -9,54 +14,19 @@ const defaultAgencyInfo = {
   email: 'sefartravelservices@gmail.com',
 };
 
-const parseArray = (value) => {
-  if (Array.isArray(value)) return value;
-  if (typeof value !== 'string') return [];
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-};
+const arabicRateLabels = { Single: 'فردي', Double: 'ثنائي', Triple: 'ثلاثي' };
 
-const getListValues = (value) => parseArray(value)
+const getListValues = (value) => parseBrochureArray(value)
   .map((item) => typeof item === 'string' ? item : item?.value || item?.label || '')
   .filter(Boolean);
-
-const getItineraryDays = (packageData) => {
-  const plan = String(packageData.plan_de_vol || '').trim();
-  if (!packageData.include_itinerary && !plan) return [];
-
-  const days = parseArray(packageData.itinerary_days)
-    .map((day, index) => ({
-      label: day?.label || `اليوم ${index + 1}`,
-      description: day?.description || '',
-    }))
-    .filter((day) => day.label || day.description);
-  if (days.length) return days;
-
-  if (!plan) return [];
-
-  return plan
-    .split(/\r?\n/)
-    .map((line, index) => {
-      const match = line.match(/^(.*?):\s*(.*)$/);
-      return {
-        label: match?.[1]?.trim() || `اليوم ${index + 1}`,
-        description: match?.[2]?.trim() || line.trim(),
-      };
-    })
-    .filter((day) => day.description || day.label);
-};
 
 const HajjOmraBrochure = forwardRef(({ packageData }, ref) => {
   if (!packageData) return null;
 
   const agencyInfo = { ...defaultAgencyInfo, ...(packageData.agencySettings || {}) };
-  const travelDates = parseArray(packageData.travel_dates).length
-    ? parseArray(packageData.travel_dates)
-    : parseArray(packageData.travel_schedule);
+  const travelDates = parseBrochureArray(packageData.travel_dates).length
+    ? parseBrochureArray(packageData.travel_dates)
+    : parseBrochureArray(packageData.travel_schedule);
   const legs = travelDates.length ? travelDates : [{
     departure_date: packageData.departure_date,
     return_date: packageData.return_date,
@@ -64,10 +34,10 @@ const HajjOmraBrochure = forwardRef(({ packageData }, ref) => {
     departure_point: packageData.departure_point,
     transport: packageData.transport,
   }];
-  const hotels = parseArray(packageData.hotels);
+  const hotels = parseBrochureArray(packageData.hotels);
   const inclusions = getListValues(packageData.inclusions);
   const exclusions = getListValues(packageData.exclusions);
-  const itineraryDays = getItineraryDays(packageData);
+  const itineraryDays = getBrochureItineraryDays(packageData);
   const formatPrice = (value) => value === '' || value === null || value === undefined
     ? '---'
     : Number.isFinite(Number(value)) ? Number(value).toLocaleString('ar-DZ') : String(value);
@@ -125,32 +95,26 @@ const HajjOmraBrochure = forwardRef(({ packageData }, ref) => {
                 <p className="break-words"><strong>الذهاب:</strong> {leg.departure_date || packageData.departure_date || 'يحدد لاحقاً'}</p>
                 <p className="break-words"><strong>العودة:</strong> {leg.return_date || packageData.return_date || 'يحدد لاحقاً'}</p>
                 <p className="break-words"><strong>النقل:</strong> {leg.transport || packageData.transport || '---'}</p>
-                {([leg.prix_single, leg.prix_double, leg.prix_triple].some((price) => price !== '' && price !== null && price !== undefined)
-                  || parseArray(leg.custom_prices).some((price) => {
-                    const value = price.price ?? price.value ?? price.amount;
-                    return value !== '' && value !== null && value !== undefined;
-                  })) && (
+                {(() => {
+                  const { standardRates, customPrices } = getBrochureTravelDatePricing(leg, hotels, legIndex);
+                  if (!standardRates.length && !customPrices.length) return null;
+                  return (
                   <div className="mt-2 space-y-1 border-t border-amber-900/10 pt-1">
-                    {[['فردي', leg.prix_single], ['ثنائي', leg.prix_double], ['ثلاثي', leg.prix_triple]]
-                      .filter(([, price]) => price !== '' && price !== null && price !== undefined)
-                      .map(([label, price]) => (
-                        <p key={label} className="flex justify-between gap-1 break-words">
-                          <span>{label}:</span>
-                          <strong className="text-amber-900">{formatPrice(price)} دج</strong>
+                    {standardRates.map((rate) => (
+                        <p key={rate.label} className="flex justify-between gap-1 break-words">
+                          <span>{arabicRateLabels[rate.label]}:</span>
+                          <strong className="text-amber-900">{formatPrice(rate.value)} دج</strong>
                         </p>
                       ))}
-                    {parseArray(leg.custom_prices).map((customPrice, priceIndex) => {
-                      const price = customPrice.price ?? customPrice.value ?? customPrice.amount;
-                      if (price === '' || price === null || price === undefined) return null;
-                      return (
-                        <p key={customPrice.id || `custom-travel-price-${priceIndex}`} className="flex justify-between gap-1 break-words">
-                          <span>{customPrice.name || customPrice.label || customPrice.key || 'سعر خاص'}:</span>
-                          <strong className="text-amber-900">{formatPrice(price)} دج</strong>
+                    {customPrices.map((customPrice, priceIndex) => (
+                        <p key={`${customPrice.name}-${customPrice.value}-${priceIndex}`} className="flex justify-between gap-1 break-words">
+                          <span>{customPrice.name}:</span>
+                          <strong className="text-amber-900">{formatPrice(customPrice.value)} دج</strong>
                         </p>
-                      );
-                    })}
+                      ))}
                   </div>
-                )}
+                  );
+                })()}
               </section>
             ))}
           </div>
@@ -177,7 +141,7 @@ const HajjOmraBrochure = forwardRef(({ packageData }, ref) => {
               {hotels.map((hotel, hotelIndex) => {
                 const legIndex = getHotelLegIndex(hotel);
                 const leg = legs[legIndex] || {};
-                const customPrices = parseArray(hotel.custom_prices);
+                const customPrices = parseBrochureArray(hotel.custom_prices);
                 return (
                   <article key={hotel.id || `hotel-${hotelIndex}`} className="min-w-0 break-inside-avoid rounded-lg border border-slate-200 bg-white p-2 shadow-sm break-words whitespace-normal">
                     <p className="mb-1 break-words text-[10px] font-bold text-amber-800">{leg.destination || packageData.destination || `الرحلة ${legIndex + 1}`}</p>

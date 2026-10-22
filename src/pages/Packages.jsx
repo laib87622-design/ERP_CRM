@@ -48,6 +48,7 @@ const PACKAGE_LIST_COLUMNS = [
   'return_date',
   'departure_point',
   'transport',
+  'plan_de_vol',
   'duration_nights',
   'service_ref',
   'is_available',

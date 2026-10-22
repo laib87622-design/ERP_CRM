@@ -1,17 +1,11 @@
 import { forwardRef } from 'react';
+import {
+  getBrochureItineraryDays,
+  getBrochureTravelDatePricing,
+  parseBrochureArray,
+} from '../lib/packageBrochureData';
 
-const parseArray = (value) => {
-  if (Array.isArray(value)) return value;
-  if (typeof value !== 'string') return [];
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-};
-
-const getListValues = (value) => parseArray(value)
+const getListValues = (value) => parseBrochureArray(value)
   .map((item) => typeof item === 'string' ? item : item?.value || item?.label || '')
   .filter(Boolean);
 
@@ -26,18 +20,25 @@ const getTextLines = (value) => {
 const TripBrochure = forwardRef(({ packageData }, ref) => {
   if (!packageData) return null;
 
-  const travelDate = parseArray(packageData.travel_dates)[0] || parseArray(packageData.travel_schedule)[0] || {};
-  const hotels = parseArray(packageData.hotels);
+  const travelDates = parseBrochureArray(packageData.travel_dates).length
+    ? parseBrochureArray(packageData.travel_dates)
+    : parseBrochureArray(packageData.travel_schedule);
+  const hotels = parseBrochureArray(packageData.hotels);
+  const legs = travelDates.length ? travelDates : [{
+    departure_date: packageData.departure_date,
+    return_date: packageData.return_date,
+    destination: packageData.destination,
+    departure_point: packageData.departure_point,
+    transport: packageData.transport,
+  }];
   const baseHotels = hotels.filter((hotel) => hotel.pricing_scope !== 'optional' && hotel.is_primary !== false);
   const optionalHotels = hotels.filter((hotel) => hotel.pricing_scope === 'optional' || hotel.is_primary === false);
   const primaryHotelWithPrice = baseHotels.find((hotel) => hotel.prix_single || hotel.prix_double || hotel.prix_triple) || {};
   const inclusions = getListValues(packageData.inclusions);
   const exclusions = getListValues(packageData.exclusions);
+  const itineraryDays = getBrochureItineraryDays(packageData);
   const cancellationRules = getTextLines(packageData.cancellation_policy);
   const goodToKnowNotes = getTextLines(packageData.good_to_know);
-  const singlePrice = travelDate.prix_single || primaryHotelWithPrice.prix_single || '---';
-  const doublePrice = travelDate.prix_double || primaryHotelWithPrice.prix_double || '---';
-  const triplePrice = travelDate.prix_triple || primaryHotelWithPrice.prix_triple || '---';
   const getHotelName = (hotel) => hotel.hotel_name || hotel.name || 'Hotel';
   const getOptionalReplacement = (hotel) => hotels.find((item) => item.id === hotel.replacement_for_hotel_id);
   const formatPrice = (value) => value === '' || value === null || value === undefined || value === '---'
@@ -64,13 +65,69 @@ const TripBrochure = forwardRef(({ packageData }, ref) => {
       <div className="mb-10 text-center">
         <p className="mb-2 text-xs font-bold uppercase tracking-widest text-amber-600">{packageData.country || 'International Trip'}</p>
         <h1 className="mb-4 text-4xl font-light text-slate-900">{packageData.destination || packageData.label}</h1>
-        <div className="flex justify-center gap-8 rounded-lg border border-slate-100 bg-slate-50 py-3 text-sm text-slate-600">
-          <p><strong>Departure:</strong> {travelDate.departure_date || packageData.departure_date || 'TBA'}</p>
-          <p><strong>Return:</strong> {travelDate.return_date || packageData.return_date || 'TBA'}</p>
-          <p><strong>Transport:</strong> {travelDate.transport || packageData.transport || 'TBA'}</p>
+        <div className="flex flex-wrap justify-center gap-x-8 gap-y-2 rounded-lg border border-slate-100 bg-slate-50 py-3 text-sm text-slate-600">
           <p><strong>Duration:</strong> {packageData.duration_nights ? `${packageData.duration_nights} nights` : 'TBA'}</p>
+          {legs.slice(0, 1).map((leg, index) => (
+            <p key={leg.id || index}>
+              <strong>Departure:</strong> {leg.departure_date || 'TBA'}
+              {' · '}
+              <strong>Return:</strong> {leg.return_date || 'TBA'}
+              {' · '}
+              <strong>Transport:</strong> {leg.transport || 'TBA'}
+            </p>
+          ))}
         </div>
       </div>
+
+      {itineraryDays.length > 0 && (
+        <section className="mb-8">
+          <h3 className="mb-4 border-b border-slate-200 pb-2 text-lg font-semibold uppercase tracking-wide">Itinerary</h3>
+          <div className="space-y-3">
+            {itineraryDays.map((day, index) => (
+              <article key={`${day.label}-${index}`} className="break-inside-avoid rounded-lg border border-slate-100 bg-slate-50 p-4">
+                <h4 className="mb-1 font-semibold text-slate-800">{day.label}</h4>
+                <p className="whitespace-pre-wrap text-sm leading-6 text-slate-600">{day.description}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section className="mb-8">
+        <h3 className="mb-4 border-b border-slate-200 pb-2 text-lg font-semibold uppercase tracking-wide">Travel Dates &amp; Pricing</h3>
+        <div className="space-y-3">
+          {legs.map((leg, index) => {
+            const { standardRates, customPrices } = getBrochureTravelDatePricing(leg, hotels, index);
+            return (
+              <article key={leg.id || `travel-date-${index}`} className="break-inside-avoid rounded-lg border border-slate-200 bg-white p-4">
+                <h4 className="mb-2 font-semibold text-slate-800">{leg.label || `Travel Date ${index + 1}`}</h4>
+                <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-600">
+                  <span><strong>Departure:</strong> {leg.departure_date || 'TBA'}</span>
+                  <span><strong>Return:</strong> {leg.return_date || 'TBA'}</span>
+                  <span><strong>Transport:</strong> {leg.transport || 'TBA'}</span>
+                  {leg.departure_point && <span><strong>From:</strong> {leg.departure_point}</span>}
+                </div>
+                {(standardRates.length > 0 || customPrices.length > 0) && (
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    {standardRates.map((rate) => (
+                      <p key={rate.label} className="flex justify-between gap-3 rounded bg-slate-50 px-3 py-2 text-sm">
+                        <span>{rate.label}</span>
+                        <strong>{formatPrice(rate.value)} DA</strong>
+                      </p>
+                    ))}
+                    {customPrices.map((rate, rateIndex) => (
+                      <p key={`${rate.name}-${rate.value}-${rateIndex}`} className="flex justify-between gap-3 rounded bg-amber-50 px-3 py-2 text-sm">
+                        <span>{rate.name}</span>
+                        <strong>{formatPrice(rate.value)} DA</strong>
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      </section>
 
       <div className="mb-10">
         <h3 className="mb-4 border-b border-slate-200 pb-2 text-lg font-semibold uppercase tracking-wide">Base Package &amp; Pricing</h3>
@@ -92,15 +149,15 @@ const TripBrochure = forwardRef(({ packageData }, ref) => {
             <div className="space-y-2 rounded border border-slate-100 bg-slate-50 p-4">
               <div className="flex justify-between border-b border-slate-200 pb-2">
                 <span className="text-sm">Single Room</span>
-                <span className="font-semibold">{formatPrice(singlePrice)} DA</span>
+                <span className="font-semibold">{formatPrice(primaryHotelWithPrice.prix_single)} DA</span>
               </div>
               <div className="flex justify-between border-b border-slate-200 pb-2">
                 <span className="text-sm">Double Room</span>
-                <span className="font-semibold">{formatPrice(doublePrice)} DA</span>
+                <span className="font-semibold">{formatPrice(primaryHotelWithPrice.prix_double)} DA</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-sm">Triple Room</span>
-                <span className="font-semibold">{formatPrice(triplePrice)} DA</span>
+                <span className="font-semibold">{formatPrice(primaryHotelWithPrice.prix_triple)} DA</span>
               </div>
             </div>
           </div>
