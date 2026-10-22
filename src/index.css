@@ -41,10 +41,20 @@ body {
     margin: 10mm;
   }
 
+  body > #root {
+    display: none !important;
+  }
+
   .brochure-print-root {
+    display: block !important;
     position: static !important;
     inset: auto !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
     overflow: visible !important;
+    background: #fff !important;
   }
 }
 

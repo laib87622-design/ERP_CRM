@@ -179,7 +179,7 @@ export default function Sidebar({ isOpen, ui, isDarkMode, language = 'en', agenc
   };
 
   return (
-    <aside className={`${isOpen ? 'w-72' : 'w-20'} flex h-screen shrink-0 flex-col overflow-hidden transition-all duration-300 ${isDarkMode ? 'bg-[#0a1120] text-brand-surface' : 'bg-brand-navy text-brand-surface'}`}>
+    <aside className={`${isOpen ? 'w-72' : 'w-20'} flex h-screen shrink-0 flex-col overflow-hidden transition-all duration-300 print:hidden ${isDarkMode ? 'bg-[#0a1120] text-brand-surface' : 'bg-brand-navy text-brand-surface'}`}>
       <div className="flex h-16 items-center justify-center border-b border-gray-800">
             <div className={`flex min-w-0 items-center justify-center transition-all ${isOpen ? 'gap-3 px-3' : 'gap-0'}`}>
               {agency?.logo_url ? (

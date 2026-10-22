@@ -89,7 +89,7 @@ const HajjOmraBrochure = forwardRef(({ packageData }, ref) => {
     <div
       ref={ref}
       dir="rtl"
-      className="relative mx-auto w-[800px] max-w-full bg-white p-8 text-slate-900 font-['Amiri',serif] print:w-full print:max-w-none print:overflow-visible"
+      className="relative mx-auto w-[800px] max-w-full bg-white p-8 text-slate-900 font-['Amiri',serif] print:static print:m-0 print:w-full print:max-w-none print:overflow-visible print:bg-white print:p-0"
       style={{ backgroundImage: `url(${backgroundImage})`, backgroundSize: 'cover', backgroundPosition: 'center', fontFamily: "'Amiri', serif" }}
     >
       <div className="absolute inset-0 z-0 bg-white/95" />

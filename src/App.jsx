@@ -429,14 +429,14 @@ function App() {
       <FinancialPasswordProvider>
         <div
           data-theme={isDarkMode ? 'dark' : 'light'}
-          className={`flex h-screen overflow-hidden font-sans ${isDarkMode ? 'bg-[#0a1120] text-slate-50' : 'bg-brand-surface text-brand-navy'}`}
+          className={`flex h-screen overflow-hidden font-sans print:hidden ${isDarkMode ? 'bg-[#0a1120] text-slate-50' : 'bg-brand-surface text-brand-navy'}`}
           dir={isRTL ? 'rtl' : 'ltr'}
           lang={language}
         >
         <Sidebar isOpen={isSidebarOpen} language={language} ui={ui} isDarkMode={isDarkMode} agency={agency} userProfile={userProfile} />
 
         <div className="flex flex-1 flex-col">
-          <header className={`flex h-16 items-center justify-between border-b px-6 shadow-sm ${isDarkMode ? 'border-slate-700 bg-[#0f172a] text-slate-100' : 'border-gray-200 bg-brand-card text-brand-navy'}`}>
+          <header className={`flex h-16 items-center justify-between border-b px-6 shadow-sm print:hidden ${isDarkMode ? 'border-slate-700 bg-[#0f172a] text-slate-100' : 'border-gray-200 bg-brand-card text-brand-navy'}`}>
             <button
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
               className={`${isDarkMode ? 'text-slate-100 hover:text-brand-gold' : 'text-brand-navy hover:text-brand-gold'} transition-colors`}
@@ -616,7 +616,7 @@ function App() {
             </div>
           </header>
 
-          <main className={`flex-1 overflow-y-auto p-8 transition-colors ${isDarkMode ? 'bg-[#0a1120]' : 'bg-brand-surface'}`}>
+          <main className={`flex-1 overflow-y-auto p-8 transition-colors print:hidden ${isDarkMode ? 'bg-[#0a1120]' : 'bg-brand-surface'}`}>
             <Routes>
               <Route path="/" element={<ProtectedRoute requiredModule="dashboard"><DashboardHome language={language} ui={ui} agencyName={agency?.agency_name || ''} /></ProtectedRoute>} />
               <Route path="/login" element={<Login language={language} setLanguage={setLanguage} />} />

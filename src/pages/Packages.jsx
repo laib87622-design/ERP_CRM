@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   CalendarDays,
   ChevronLeft,
@@ -4452,14 +4453,15 @@ export default function Packages({ language = 'en' }) {
       )}
 
       </div>
-      {selectedPkgForPdf && (
-        <div className="brochure-print-root hidden print:block print:bg-white">
+      {selectedPkgForPdf && typeof document !== 'undefined' && createPortal(
+        <div className="brochure-print-root hidden print:block print:w-full print:max-w-none print:bg-white print:p-0 print:m-0">
           {String(selectedPkgForPdf.template_type || '').toLowerCase() === 'hotel_promotion'
             ? <HotelPromotionBrochure packageData={selectedPkgForPdf} />
             : ['hajj', 'omra'].includes(String(selectedPkgForPdf.template_type || '').toLowerCase())
             ? <HajjOmraBrochure packageData={selectedPkgForPdf} />
             : <TripBrochure packageData={selectedPkgForPdf} />}
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
