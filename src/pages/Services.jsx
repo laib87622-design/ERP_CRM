@@ -496,11 +496,103 @@ export default function Services({ language = 'en' }) {
       setSaving(true);
       setError('');
 
-      const { error: deleteError } = await supabase.from('client_services').delete().eq('id', rowId);
+      const clientService = clientServices.find((row) => row.id === rowId);
+      if (!clientService) throw new Error('This client service is no longer available. Refresh the page and try again.');
+
+      let shouldDeleteClientTemplate = false;
+      if (clientService.template_id && clientService.client_id) {
+        const [
+          { data: template, error: templateError },
+          { data: otherClientServices, error: otherClientServicesError },
+          { data: otherAssignments, error: assignmentsError },
+          { data: linkedBookings, error: bookingsError },
+        ] = await Promise.all([
+          supabase
+            .from('service_templates')
+            .select('id, client_id')
+            .eq('id', clientService.template_id)
+            .maybeSingle(),
+          supabase
+            .from('client_services')
+            .select('id')
+            .eq('template_id', clientService.template_id)
+            .neq('id', rowId)
+            .limit(1),
+          supabase
+            .from('service_clients')
+            .select('id')
+            .eq('service_template_id', clientService.template_id)
+            .neq('client_id', clientService.client_id)
+            .limit(1),
+          supabase
+            .from('bookings')
+            .select('id')
+            .eq('service_id', clientService.template_id)
+            .limit(1),
+        ]);
+
+        if (templateError) throw templateError;
+        if (otherClientServicesError) throw otherClientServicesError;
+        if (assignmentsError) throw assignmentsError;
+        if (bookingsError) throw bookingsError;
+
+        shouldDeleteClientTemplate = Boolean(
+          template
+          && template.client_id === clientService.client_id
+          && !otherClientServices?.length
+          && !otherAssignments?.length
+          && !linkedBookings?.length
+        );
+      }
+
+      if (clientService.template_id && clientService.client_id) {
+        const { data: existingAssignments, error: assignmentFetchError } = await supabase
+          .from('service_clients')
+          .select('id')
+          .eq('service_template_id', clientService.template_id)
+          .eq('client_id', clientService.client_id);
+        if (assignmentFetchError) throw assignmentFetchError;
+
+        if (existingAssignments?.length) {
+          const { data: deletedAssignments, error: assignmentDeleteError } = await supabase
+            .from('service_clients')
+            .delete()
+            .eq('service_template_id', clientService.template_id)
+            .eq('client_id', clientService.client_id)
+            .select('id');
+          if (assignmentDeleteError) throw assignmentDeleteError;
+          if (deletedAssignments?.length !== existingAssignments.length) {
+            throw new Error('Supabase did not remove the client assignment. Apply the service-client delete policy migration and try again.');
+          }
+        }
+      }
+
+      const { data: deletedServices, error: deleteError } = await supabase
+        .from('client_services')
+        .delete()
+        .eq('id', rowId)
+        .select('id');
       if (deleteError) throw deleteError;
+      if (!deletedServices?.length) {
+        throw new Error('Supabase did not delete this client service. Check your access permissions and try again.');
+      }
 
       setClientServices((prev) => prev.filter((row) => row.id !== rowId));
       if (selectedClientServiceId === rowId) setSelectedClientServiceId(null);
+
+      if (shouldDeleteClientTemplate) {
+        const { data: deletedTemplates, error: templateDeleteError } = await supabase
+          .from('service_templates')
+          .delete()
+          .eq('id', clientService.template_id)
+          .eq('client_id', clientService.client_id)
+          .select('id');
+
+        if (templateDeleteError) throw templateDeleteError;
+        if (!deletedTemplates?.length) {
+          throw new Error('The client service was removed, but its copied template could not be deleted. Check your access permissions.');
+        }
+      }
     } catch (err) {
       setError(err.message || 'Unable to delete client service.');
     } finally {

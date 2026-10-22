@@ -3904,6 +3904,12 @@ CREATE POLICY service_clients_select_all ON public.service_clients FOR SELECT US
 
 CREATE POLICY service_clients_update_all ON public.service_clients FOR UPDATE USING (true) WITH CHECK (true);
 
+--
+-- Name: service_clients service_clients_delete_authenticated; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY service_clients_delete_authenticated ON public.service_clients FOR DELETE TO authenticated USING (true);
+
 
 --
 -- Name: service_items; Type: ROW SECURITY; Schema: public; Owner: -
