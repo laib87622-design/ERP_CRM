@@ -373,7 +373,7 @@ export default function Marketing() {
           </select>
         </div>
 
-        <div className="w-full min-w-0 overflow-x-auto">
+        <div className="w-full overflow-x-auto block">
           <table className="w-max min-w-[1900px] border-collapse text-left">
             <thead className="bg-slate-50">
               <tr>
