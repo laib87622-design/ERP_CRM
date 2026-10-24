@@ -435,7 +435,7 @@ function App() {
         >
         <Sidebar isOpen={isSidebarOpen} language={language} ui={ui} isDarkMode={isDarkMode} agency={agency} userProfile={userProfile} />
 
-        <div className="flex flex-1 flex-col">
+        <div className="flex min-w-0 w-0 flex-1 flex-col">
           <header className={`flex h-16 items-center justify-between border-b px-6 shadow-sm print:hidden ${isDarkMode ? 'border-slate-700 bg-[#0f172a] text-slate-100' : 'border-gray-200 bg-brand-card text-brand-navy'}`}>
             <button
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -616,7 +616,7 @@ function App() {
             </div>
           </header>
 
-          <main className={`flex-1 overflow-y-auto p-8 transition-colors print:hidden ${isDarkMode ? 'bg-[#0a1120]' : 'bg-brand-surface'}`}>
+          <main className={`w-full min-w-0 flex-1 overflow-x-hidden overflow-y-auto p-8 transition-colors print:hidden ${isDarkMode ? 'bg-[#0a1120]' : 'bg-brand-surface'}`}>
             <Routes>
               <Route path="/" element={<ProtectedRoute requiredModule="dashboard"><DashboardHome language={language} ui={ui} agencyName={agency?.agency_name || ''} /></ProtectedRoute>} />
               <Route path="/login" element={<Login language={language} setLanguage={setLanguage} />} />

@@ -184,6 +184,7 @@ export default function Marketing() {
   const [dayFilter, setDayFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [channelFilter, setChannelFilter] = useState('all');
+  const [agentFilter, setAgentFilter] = useState('all');
   const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => {
@@ -222,9 +223,11 @@ export default function Marketing() {
       const matchesDay = dayFilter === 'all' || String(task.day || '').toUpperCase() === dayFilter;
       const matchesStatus = statusFilter === 'all' || String(task.status || '').toUpperCase() === statusFilter;
       const matchesChannel = channelFilter === 'all' || String(task.channel || '').toUpperCase() === channelFilter;
-      return matchesSearch && matchesDay && matchesStatus && matchesChannel;
+      const matchesAgent = agentFilter === 'all'
+        || String(task.agent || '').trim().toLowerCase() === agentFilter.toLowerCase();
+      return matchesSearch && matchesDay && matchesStatus && matchesChannel && matchesAgent;
     });
-  }, [tasks, searchTerm, dayFilter, statusFilter, channelFilter]);
+  }, [tasks, searchTerm, dayFilter, statusFilter, channelFilter, agentFilter]);
 
   const fetchPageData = useCallback(async () => {
     if (!supabase) {
@@ -360,18 +363,18 @@ export default function Marketing() {
   };
 
   return (
-    <main className="w-full min-w-0 max-w-full space-y-6 overflow-hidden">
-      <header className="flex w-full min-w-0 flex-wrap items-end justify-between gap-4">
+    <main className="w-full min-w-0 max-w-full space-y-6 overflow-x-hidden">
+      <header className="flex w-full min-w-0 flex-wrap items-end justify-between gap-4 rounded-2xl border border-slate-200/80 bg-white/80 px-6 py-5 shadow-sm">
         <div className="min-w-0">
-          <p className="text-xs font-bold uppercase tracking-[0.22em] text-amber-700">Growth workspace</p>
-          <h1 className="mt-2 font-serif text-3xl text-brand-navy">Marketing Tasks</h1>
+          <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-amber-700">Growth workspace</p>
+          <h1 className="mt-1.5 font-serif text-3xl tracking-tight text-brand-navy">Marketing Tasks</h1>
           <p className="mt-1 text-sm text-slate-500">Plan, edit, and track your content in one place.</p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => setIsFullscreen(true)}
-            className="inline-flex items-center gap-2 whitespace-nowrap rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
+            className="inline-flex items-center gap-2 whitespace-nowrap rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:bg-slate-50 hover:shadow-md"
           >
             <Expand size={16} />
             Expand to Fullscreen
@@ -379,7 +382,7 @@ export default function Marketing() {
           <button
             type="button"
             onClick={openForm}
-            className="inline-flex items-center gap-2 whitespace-nowrap rounded-xl bg-brand-navy px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+            className="inline-flex items-center gap-2 whitespace-nowrap rounded-xl bg-brand-navy px-4 py-3 text-sm font-semibold text-white shadow-md shadow-slate-900/10 transition hover:-translate-y-0.5 hover:bg-slate-800 hover:shadow-lg"
           >
             <Plus size={17} />
             New Campaign / Task
@@ -395,13 +398,13 @@ export default function Marketing() {
 
       <section className={isFullscreen
         ? 'fixed inset-0 z-50 bg-white p-6 w-screen h-screen overflow-hidden flex flex-col'
-        : 'flex w-full min-w-0 max-w-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm'}>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
+        : 'flex w-full min-w-0 max-w-full flex-col overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_16px_50px_-28px_rgba(15,23,42,0.28)]'}>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/80 bg-gradient-to-r from-white via-white to-amber-50/50 px-5 py-4">
           <div className="flex items-center gap-3">
-            <span className="rounded-xl bg-amber-50 p-2.5 text-amber-700"><Rows3 size={18} /></span>
+            <span className="rounded-xl bg-gradient-to-br from-amber-100 to-amber-50 p-2.5 text-amber-800 shadow-inner"><Rows3 size={18} /></span>
             <div>
-              <h2 className="font-semibold text-brand-navy">Campaign & task board</h2>
-              <p className="text-xs text-slate-500">Edit cells directly; dropdowns also accept custom values.</p>
+              <h2 className="font-semibold tracking-tight text-brand-navy">Campaign & task board</h2>
+              <p className="mt-0.5 text-xs text-slate-500">Edit cells directly and keep every campaign on track.</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -415,13 +418,13 @@ export default function Marketing() {
                 Exit Fullscreen
               </button>
             )}
-            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+            <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-sm">
               {loading ? 'Loading…' : `${filteredTasks.length} of ${tasks.length} ${tasks.length === 1 ? 'task' : 'tasks'}`}
             </span>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 bg-white px-5 py-4">
+        <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 bg-slate-50/60 px-5 py-4">
           <div className="relative min-w-[220px] flex-1">
             <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
@@ -430,7 +433,7 @@ export default function Marketing() {
               onChange={(event) => setSearchTerm(event.target.value)}
               placeholder="Search tasks…"
               aria-label="Search marketing tasks"
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-9 pr-3 text-sm text-brand-navy outline-none focus:border-brand-gold focus:bg-white"
+              className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-3 text-sm text-brand-navy shadow-sm outline-none transition placeholder:text-slate-400 focus:border-brand-gold focus:ring-4 focus:ring-amber-100/70"
             />
           </div>
           <div className="flex items-center gap-2 text-slate-400" aria-hidden="true">
@@ -441,7 +444,7 @@ export default function Marketing() {
             value={dayFilter}
             onChange={(event) => setDayFilter(event.target.value)}
             aria-label="Filter by day"
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-brand-gold"
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 shadow-sm outline-none transition focus:border-brand-gold focus:ring-4 focus:ring-amber-100/70"
           >
             <option value="all">All days</option>
             {TASK_FIELDS.find(({ name }) => name === 'day').options.map((option) => <option key={option} value={option}>{option}</option>)}
@@ -450,7 +453,7 @@ export default function Marketing() {
             value={statusFilter}
             onChange={(event) => setStatusFilter(event.target.value)}
             aria-label="Filter by status"
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-brand-gold"
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 shadow-sm outline-none transition focus:border-brand-gold focus:ring-4 focus:ring-amber-100/70"
           >
             <option value="all">All statuses</option>
             {TASK_FIELDS.find(({ name }) => name === 'status').options.map((option) => <option key={option} value={option}>{option}</option>)}
@@ -459,20 +462,31 @@ export default function Marketing() {
             value={channelFilter}
             onChange={(event) => setChannelFilter(event.target.value)}
             aria-label="Filter by channel"
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-brand-gold"
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 shadow-sm outline-none transition focus:border-brand-gold focus:ring-4 focus:ring-amber-100/70"
           >
             <option value="all">All channels</option>
             {TASK_FIELDS.find(({ name }) => name === 'channel').options.map((option) => <option key={option} value={option}>{option}</option>)}
           </select>
+          <select
+            value={agentFilter}
+            onChange={(event) => setAgentFilter(event.target.value)}
+            aria-label="Filter by agent"
+            className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 shadow-sm outline-none transition focus:border-brand-gold focus:ring-4 focus:ring-amber-100/70"
+          >
+            <option value="all">All agents</option>
+            {savedDropdownOptions.agent.map((agent) => (
+              <option key={agent} value={agent}>{agent}</option>
+            ))}
+          </select>
         </div>
 
-        <div className="block w-full min-h-0 flex-1 overflow-auto">
-          <table className="w-max min-w-[1900px] border-collapse text-left">
-            <thead className="sticky top-0 z-20 bg-slate-50">
+        <div className="block w-full min-h-0 flex-1 overflow-auto overscroll-x-contain">
+          <table className="w-max min-w-[1900px] border-separate border-spacing-0 text-left">
+            <thead>
               <tr>
-                <th className="sticky left-0 z-10 w-12 border-b border-r border-slate-200 bg-slate-50 px-3 py-3 text-center text-[11px] font-semibold uppercase tracking-wider text-slate-400">#</th>
+                <th className="sticky left-0 top-0 z-30 w-12 border-b border-r border-slate-200 bg-slate-100/95 px-3 py-3.5 text-center text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500 backdrop-blur">#</th>
                 {TASK_FIELDS.map((field) => (
-                  <th key={field.name} className="border-b border-r border-slate-200 px-3 py-3 text-xs font-bold uppercase tracking-wide text-slate-500">
+                  <th key={field.name} className="sticky top-0 z-20 border-b border-r border-slate-200 bg-slate-100/95 px-4 py-3.5 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500 backdrop-blur">
                     {field.label}
                   </th>
                 ))}
@@ -500,12 +514,12 @@ export default function Marketing() {
                   </td>
                 </tr>
               ) : filteredTasks.map((task, index) => (
-                <tr key={task.id} className="group border-b border-slate-100 last:border-0 hover:bg-amber-50/30">
-                  <td className="sticky left-0 z-[1] border-r border-slate-200 bg-white px-3 py-2 text-center font-mono text-xs text-slate-400 group-hover:bg-amber-50/60">
+                <tr key={task.id} className="group">
+                  <td className="sticky left-0 z-10 border-b border-r border-slate-100 bg-white px-3 py-2.5 text-center font-mono text-[11px] text-slate-400 transition-colors group-hover:bg-amber-50">
                     {String(index + 1).padStart(2, '0')}
                   </td>
                   {TASK_FIELDS.map((field) => (
-                    <td key={field.name} className="border-r border-slate-100 p-1.5 align-middle">
+                    <td key={field.name} className="border-b border-r border-slate-100/90 p-1.5 align-middle transition-colors group-hover:bg-amber-50/50">
                       <SpreadsheetCell
                         task={task}
                         field={field}
@@ -519,8 +533,8 @@ export default function Marketing() {
             </tbody>
           </table>
         </div>
-        <div className="border-t border-slate-100 bg-slate-50/70 px-5 py-2.5 text-xs text-slate-500">
-          Changes save when you leave a cell. Select a suggested value or type a new one in any dropdown field.
+        <div className="border-t border-slate-100 bg-white px-5 py-3 text-xs text-slate-500">
+          Click a cell to edit. Your changes are saved automatically.
         </div>
       </section>
 
