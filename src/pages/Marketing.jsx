@@ -1,279 +1,404 @@
-import { useEffect, useState } from 'react';
-import { BarChart3, CheckCircle2, Clock3, Megaphone } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { CalendarDays, Plus, Rows3, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { formatCurrency } from '../lib/currency';
 
-const platformIcons = {
-  Facebook: Megaphone,
-  Instagram: BarChart3,
-  'Google Ads': Clock3,
-  LinkedIn: CheckCircle2,
+const TASK_FIELDS = [
+  { name: 'day', label: 'Day', options: ['SA', 'SU', 'MO', 'TU', 'WE', 'TH', 'FR'], width: 'w-28' },
+  { name: 'agent', label: 'Agent', width: 'w-40' },
+  { name: 'headline', label: 'Headline', width: 'w-56' },
+  {
+    name: 'status',
+    label: 'Status',
+    options: ['IN PROGRESS', 'PLANNED', 'DONE', 'IDEA', 'STOP'],
+    width: 'w-40',
+  },
+  { name: 'description', label: 'Description', width: 'w-64' },
+  {
+    name: 'subject',
+    label: 'Subject',
+    options: ['VISA', 'TRIP INT', 'TRIP NAT', 'OMRA', 'FLIGHT', 'HOTEL', 'SER EDUCATION', 'SER IMMIGRATION'],
+    width: 'w-48',
+  },
+  {
+    name: 'type_of_content',
+    label: 'Type of Content',
+    options: ['POST', 'STORY', 'REELS', 'TEXT', 'IMAGE', 'CARROUSEL'],
+    width: 'w-44',
+  },
+  { name: 'source', label: 'Source', width: 'w-40' },
+  {
+    name: 'channel',
+    label: 'Channel',
+    options: ['INSTAGRAM', 'TIKTOK', 'FACEBOOK', 'WHATSAPP'],
+    width: 'w-44',
+  },
+  { name: 'to_do', label: 'To Do', width: 'w-52' },
+  { name: 'deadline_draft', label: 'Deadline Draft', type: 'date', width: 'w-44' },
+  { name: 'release_date', label: 'Release Date', type: 'date', width: 'w-44' },
+];
+
+const TASK_SELECT = `id, ${TASK_FIELDS.map(({ name }) => name).join(', ')}`;
+const EMPTY_FORM = Object.fromEntries(TASK_FIELDS.map(({ name }) => [name, '']));
+
+const STATUS_COLORS = {
+  'IN PROGRESS': 'bg-amber-100 text-amber-800 ring-amber-200',
+  PLANNED: 'bg-orange-100 text-orange-800 ring-orange-200',
+  DONE: 'bg-emerald-100 text-emerald-800 ring-emerald-200',
+  IDEA: 'bg-sky-100 text-sky-800 ring-sky-200',
+  STOP: 'bg-red-100 text-red-800 ring-red-200',
 };
 
-const statusClasses = {
-  Active: 'bg-emerald-100 text-emerald-700',
-  Scheduled: 'bg-sky-100 text-sky-700',
-  Paused: 'bg-amber-100 text-amber-700',
-  Completed: 'bg-slate-200 text-slate-700',
-};
+function normalizedValue(value, type) {
+  if (value == null) return '';
+  const stringValue = String(value);
+  return type === 'date' ? stringValue.slice(0, 10) : stringValue;
+}
 
-const emptyForm = {
-  platform: 'Facebook',
-  budget: '',
-  status: 'Active',
-};
+function FieldControl({ field, value, onChange, id, compact = false, onBlur, onKeyDown }) {
+  const listId = field.options ? `${id}-options` : undefined;
+  const inputClass = compact
+    ? `block ${field.width} max-w-full rounded-md border border-transparent bg-transparent px-2 py-2 text-sm text-slate-700 outline-none transition hover:border-slate-200 focus:border-brand-gold focus:bg-white`
+    : 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-brand-navy outline-none transition focus:border-brand-gold focus:ring-2 focus:ring-amber-100';
+  const statusClass = field.name === 'status'
+    ? `font-semibold ${STATUS_COLORS[String(value).toUpperCase()] || 'bg-slate-100 text-slate-700 ring-slate-200'}`
+    : '';
 
-export default function Marketing({ language = 'en' }) {
-  const t = {
-    en: { eyebrow: 'Growth', title: 'Marketing', newCampaign: 'New Campaign' },
-    ar: { eyebrow: 'النمو', title: 'التسويق', newCampaign: 'حملة جديدة' },
-  }[language] || { eyebrow: 'Growth', title: 'Marketing', newCampaign: 'New Campaign' };
+  return (
+    <>
+      <input
+        id={id}
+        type={field.type || 'text'}
+        list={listId}
+        value={normalizedValue(value, field.type)}
+        onChange={(event) => onChange(event.target.value)}
+        onBlur={onBlur}
+        onKeyDown={onKeyDown}
+        autoComplete="off"
+        className={`${inputClass} ${statusClass} ${compact && field.type === 'date' ? 'min-w-40' : ''}`}
+        aria-label={field.label}
+        placeholder={compact ? '—' : `Enter ${field.label.toLowerCase()}`}
+      />
+      {field.options && (
+        <datalist id={listId}>
+          {field.options.map((option) => <option key={option} value={option} />)}
+        </datalist>
+      )}
+    </>
+  );
+}
 
-  const [campaigns, setCampaigns] = useState([]);
+function SpreadsheetCell({ task, field, onSave }) {
+  const savedValue = normalizedValue(task[field.name], field.type);
+  const [value, setValue] = useState(savedValue);
+
+  const save = async () => {
+    if (value === savedValue) return;
+    const saved = await onSave(task.id, field.name, value);
+    if (!saved) setValue(savedValue);
+  };
+
+  return (
+    <FieldControl
+      field={field}
+      value={value}
+      onChange={setValue}
+      onBlur={save}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') event.currentTarget.blur();
+      }}
+      id={`task-${task.id}-${field.name}`}
+      compact
+    />
+  );
+}
+
+export default function Marketing() {
+  const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [isFormOpen, setIsFormOpen] = useState(false);
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    const fetchCampaigns = async () => {
-      try {
-        setLoading(true);
-        setError('');
+  const fetchTasks = useCallback(async () => {
+    if (!supabase) {
+      return {
+        data: null,
+        error: { message: 'Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.' },
+      };
+    }
 
-        if (!supabase) {
-          setError('Supabase is not configured yet. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
-          setCampaigns([]);
-          return;
-        }
-
-        const { data, error } = await supabase
-          .from('marketing_campaigns')
-          .select('id, platform, budget, status')
-          .order('updated_at', { ascending: false });
-
-        if (error) throw error;
-
-        setCampaigns(data || []);
-      } catch (err) {
-        setError(err.message || 'Unable to load campaigns.');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchCampaigns();
+    return supabase
+      .from('marketing_tasks')
+      .select(TASK_SELECT)
+      .order('release_date', { ascending: true, nullsFirst: false });
   }, []);
 
-  const handleCreateCampaign = async (event) => {
+  useEffect(() => {
+    let active = true;
+
+    fetchTasks()
+      .then(({ data, error: fetchError }) => {
+        if (!active) return;
+        if (fetchError) {
+          setError(fetchError.message || 'Unable to load marketing tasks.');
+          setTasks([]);
+        } else {
+          setError('');
+          setTasks(data || []);
+        }
+        setLoading(false);
+      })
+      .catch((fetchError) => {
+        if (!active) return;
+        setError(fetchError.message || 'Unable to load marketing tasks.');
+        setTasks([]);
+        setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [fetchTasks]);
+
+  const updateTask = async (id, field, value) => {
+    if (!supabase) {
+      setError('Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
+      return false;
+    }
+
+    setError('');
+    const nextValue = field === 'deadline_draft' || field === 'release_date'
+      ? (value || null)
+      : value;
+    try {
+      const { data, error: updateError } = await supabase
+        .from('marketing_tasks')
+        .update({ [field]: nextValue })
+        .eq('id', id)
+        .select(TASK_SELECT)
+        .single();
+
+      if (updateError) {
+        setError(updateError.message || 'Unable to update marketing task.');
+        return false;
+      }
+
+      setTasks((current) => current.map((task) => task.id === id ? data : task));
+      return true;
+    } catch (updateError) {
+      setError(updateError.message || 'Unable to update marketing task.');
+      return false;
+    }
+  };
+
+  const handleCreateTask = async (event) => {
     event.preventDefault();
 
     if (!supabase) {
-      setError('Supabase is not configured yet. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
+      setError('Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
       return;
     }
 
-    const trimmedPlatform = form.platform.trim();
-    const budget = Number(form.budget || 0);
-
-    if (!trimmedPlatform) {
-      setError('Campaign platform is required.');
-      return;
-    }
+    setSaving(true);
+    setError('');
+    const payload = Object.fromEntries(TASK_FIELDS.map(({ name, type }) => {
+      const value = form[name].trim();
+      return [name, type === 'date' && !value ? null : value];
+    }));
 
     try {
-      setSaving(true);
-      setError('');
-
-      const payload = {
-        platform: trimmedPlatform,
-        budget,
-        status: form.status,
-      };
-
       const { data, error: insertError } = await supabase
-        .from('marketing_campaigns')
-        .insert([payload])
-        .select('id, platform, budget, status')
+        .from('marketing_tasks')
+        .insert(payload)
+        .select(TASK_SELECT)
         .single();
 
-      if (insertError) throw insertError;
-
-      setCampaigns((prev) => [data, ...prev]);
-      setForm(emptyForm);
-      setIsFormOpen(false);
-    } catch (err) {
-      setError(err.message || 'Unable to create campaign.');
+      if (insertError) {
+        setError(insertError.message || 'Unable to create marketing task.');
+      } else {
+        setTasks((current) => [...current, data]);
+        setForm(EMPTY_FORM);
+        setIsFormOpen(false);
+      }
+    } catch (insertError) {
+      setError(insertError.message || 'Unable to create marketing task.');
     } finally {
       setSaving(false);
     }
   };
 
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-sm font-semibold uppercase tracking-[0.2em] text-brand-gold">
-            {t.eyebrow}
-          </p>
-          <h2 className="mt-2 font-serif text-3xl text-brand-navy">{t.title}</h2>
-        </div>
+  const openForm = () => {
+    setError('');
+    setForm(EMPTY_FORM);
+    setIsFormOpen(true);
+  };
 
+  return (
+    <main className="space-y-6">
+      <header className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.22em] text-amber-700">Growth workspace</p>
+          <h1 className="mt-2 font-serif text-3xl text-brand-navy">Marketing Tasks</h1>
+          <p className="mt-1 text-sm text-slate-500">Plan, edit, and track your content in one place.</p>
+        </div>
         <button
           type="button"
-          onClick={() => setIsFormOpen(true)}
-          className="rounded-xl bg-brand-gold px-4 py-3 text-sm font-bold text-brand-navy"
+          onClick={openForm}
+          className="inline-flex items-center gap-2 rounded-xl bg-brand-navy px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
         >
-          {t.newCampaign}
+          <Plus size={17} />
+          New Campaign / Task
         </button>
-      </div>
+      </header>
 
       {error && (
-        <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           {error}
         </div>
       )}
 
-      <div className="rounded-2xl border border-slate-200 bg-brand-card shadow-sm">
+      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
+          <div className="flex items-center gap-3">
+            <span className="rounded-xl bg-amber-50 p-2.5 text-amber-700"><Rows3 size={18} /></span>
+            <div>
+              <h2 className="font-semibold text-brand-navy">Campaign & task board</h2>
+              <p className="text-xs text-slate-500">Edit cells directly; dropdowns also accept custom values.</p>
+            </div>
+          </div>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+            {loading ? 'Loading…' : `${tasks.length} ${tasks.length === 1 ? 'task' : 'tasks'}`}
+          </span>
+        </div>
+
         <div className="overflow-x-auto">
-          <table className="min-w-full text-left">
-            <thead className="bg-slate-50 text-xs uppercase tracking-[0.15em] text-slate-500">
+          <table className="w-max min-w-[1900px] border-collapse text-left">
+            <thead className="bg-slate-50">
               <tr>
-                <th className="px-5 py-3">Platform</th>
-                <th className="px-5 py-3">Budget</th>
-                <th className="px-5 py-3">Status</th>
+                <th className="sticky left-0 z-10 w-12 border-b border-r border-slate-200 bg-slate-50 px-3 py-3 text-center text-[11px] font-semibold uppercase tracking-wider text-slate-400">#</th>
+                {TASK_FIELDS.map((field) => (
+                  <th key={field.name} className="border-b border-r border-slate-200 px-3 py-3 text-xs font-bold uppercase tracking-wide text-slate-500">
+                    {field.label}
+                  </th>
+                ))}
               </tr>
             </thead>
-
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="3" className="px-5 py-10 text-center text-sm text-slate-500">
-                    Loading campaigns...
+                  <td colSpan={TASK_FIELDS.length + 1} className="px-5 py-14 text-center text-sm text-slate-500">
+                    Loading marketing tasks…
                   </td>
                 </tr>
-              ) : campaigns.length === 0 ? (
+              ) : tasks.length === 0 ? (
                 <tr>
-                  <td colSpan="3" className="px-5 py-10 text-center text-sm text-slate-500">
-                    No campaigns found.
+                  <td colSpan={TASK_FIELDS.length + 1} className="px-5 py-14 text-center">
+                    <CalendarDays className="mx-auto mb-3 text-slate-300" size={25} />
+                    <p className="font-medium text-slate-700">No marketing tasks yet</p>
+                    <p className="mt-1 text-sm text-slate-500">Create a campaign or task to start filling in your board.</p>
                   </td>
                 </tr>
-              ) : (
-                campaigns.map((campaign) => {
-                  const Icon = platformIcons[campaign.platform] || Megaphone;
-
-                  return (
-                    <tr key={campaign.id} className="border-t border-slate-200 text-sm text-slate-700">
-                      <td className="px-5 py-4">
-                        <div className="flex items-center gap-3">
-                          <div className="rounded-lg bg-brand-surface p-2 text-brand-navy">
-                            <Icon size={16} />
-                          </div>
-                          <span className="font-medium text-brand-navy">{campaign.platform}</span>
-                        </div>
-                      </td>
-                      <td className="px-5 py-4 font-mono text-brand-navy">
-                        {formatCurrency(campaign.budget)}
-                      </td>
-                      <td className="px-5 py-4">
-                        <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-[0.12em] ${statusClasses[campaign.status] || 'bg-slate-100 text-slate-700'}`}>
-                          {campaign.status}
-                        </span>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
+              ) : tasks.map((task, index) => (
+                <tr key={task.id} className="group border-b border-slate-100 last:border-0 hover:bg-amber-50/30">
+                  <td className="sticky left-0 z-[1] border-r border-slate-200 bg-white px-3 py-2 text-center font-mono text-xs text-slate-400 group-hover:bg-amber-50/60">
+                    {String(index + 1).padStart(2, '0')}
+                  </td>
+                  {TASK_FIELDS.map((field) => (
+                    <td key={field.name} className="border-r border-slate-100 p-1.5 align-middle">
+                      <SpreadsheetCell task={task} field={field} onSave={updateTask} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
-      </div>
+        <div className="border-t border-slate-100 bg-slate-50/70 px-5 py-2.5 text-xs text-slate-500">
+          Changes save when you leave a cell. Select a suggested value or type a new one in any dropdown field.
+        </div>
+      </section>
 
       {isFormOpen && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-slate-900/30 backdrop-blur-sm">
-          <div className="h-full w-full max-w-xl overflow-y-auto bg-brand-card p-6 shadow-2xl">
-            <div className="mb-6 flex items-center justify-between">
+        <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/40 backdrop-blur-[2px]">
+          <button
+            type="button"
+            className="absolute inset-0 cursor-default"
+            aria-label="Close task form"
+            onClick={() => setIsFormOpen(false)}
+          />
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="marketing-task-form-title"
+            className="relative z-10 flex h-full w-full max-w-2xl flex-col overflow-hidden bg-white shadow-2xl"
+          >
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-gold">Campaign</p>
-                <h3 className="mt-2 font-serif text-2xl text-brand-navy">New Campaign</h3>
+                <p className="text-xs font-bold uppercase tracking-[0.2em] text-amber-700">Marketing board</p>
+                <h2 id="marketing-task-form-title" className="mt-1 font-serif text-2xl text-brand-navy">New Campaign / Task</h2>
+                <p className="mt-1 text-sm text-slate-500">Fill in the details below. Suggested dropdown values are editable.</p>
               </div>
-
               <button
                 type="button"
                 onClick={() => setIsFormOpen(false)}
                 className="rounded-lg p-2 text-slate-500 transition hover:bg-slate-100 hover:text-brand-navy"
-                aria-label="Close marketing form"
+                aria-label="Close marketing task form"
               >
-                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M6 6l12 12M18 6L6 18" />
-                </svg>
+                <X size={20} />
               </button>
             </div>
 
-            <form onSubmit={handleCreateCampaign} className="space-y-5">
-              <div>
-                <label className="mb-1 block text-sm font-medium text-brand-navy">Platform</label>
-                <select
-                  value={form.platform}
-                  onChange={(event) => setForm((prev) => ({ ...prev, platform: event.target.value }))}
-                  className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 text-brand-navy outline-none focus:border-brand-gold"
-                >
-                  <option value="Facebook">Facebook</option>
-                  <option value="Instagram">Instagram</option>
-                  <option value="Google Ads">Google Ads</option>
-                  <option value="LinkedIn">LinkedIn</option>
-                </select>
+            <form onSubmit={handleCreateTask} className="flex min-h-0 flex-1 flex-col">
+              <div className="grid flex-1 grid-cols-1 gap-x-4 gap-y-4 overflow-y-auto px-6 py-5 sm:grid-cols-2">
+                {TASK_FIELDS.map((field) => (
+                  <div key={field.name} className={field.name === 'description' || field.name === 'headline' || field.name === 'to_do' ? 'sm:col-span-2' : ''}>
+                    <label htmlFor={`new-task-${field.name}`} className="mb-1.5 block text-sm font-semibold text-slate-700">
+                      {field.label}
+                    </label>
+                    {field.name === 'description' ? (
+                      <textarea
+                        id={`new-task-${field.name}`}
+                        value={form[field.name]}
+                        onChange={(event) => setForm((current) => ({ ...current, [field.name]: event.target.value }))}
+                        rows={3}
+                        className="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-brand-navy outline-none transition focus:border-brand-gold focus:ring-2 focus:ring-amber-100"
+                        placeholder="Enter description"
+                      />
+                    ) : (
+                      <FieldControl
+                        field={field}
+                        value={form[field.name]}
+                        onChange={(value) => setForm((current) => ({ ...current, [field.name]: value }))}
+                        id={`new-task-${field.name}`}
+                      />
+                    )}
+                  </div>
+                ))}
               </div>
 
-              <div>
-                <label className="mb-1 block text-sm font-medium text-brand-navy">Budget (DZD)</label>
-                <input
-                  type="number"
-                  min="0"
-                  value={form.budget}
-                  onChange={(event) => setForm((prev) => ({ ...prev, budget: event.target.value }))}
-                  className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 text-brand-navy outline-none focus:border-brand-gold"
-                />
-              </div>
-
-              <div>
-                <label className="mb-1 block text-sm font-medium text-brand-navy">Status</label>
-                <select
-                  value={form.status}
-                  onChange={(event) => setForm((prev) => ({ ...prev, status: event.target.value }))}
-                  className="w-full rounded-xl border border-slate-200 bg-brand-surface px-3 py-2.5 text-brand-navy outline-none focus:border-brand-gold"
-                >
-                  <option value="Active">Active</option>
-                  <option value="Scheduled">Scheduled</option>
-                  <option value="Paused">Paused</option>
-                  <option value="Completed">Completed</option>
-                </select>
-              </div>
-
-              {error && <p className="text-sm text-red-600">{error}</p>}
-
-              <div className="flex justify-end gap-3 pt-4">
+              {error && <p role="alert" className="mx-6 mb-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+              <div className="flex justify-end gap-3 border-t border-slate-200 bg-slate-50 px-6 py-4">
                 <button
                   type="button"
                   onClick={() => setIsFormOpen(false)}
-                  className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-brand-navy"
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
                 >
                   Cancel
                 </button>
-
                 <button
                   type="submit"
                   disabled={saving}
-                  className="rounded-xl bg-brand-gold px-4 py-2.5 text-sm font-bold text-brand-navy disabled:opacity-60"
+                  className="inline-flex items-center gap-2 rounded-xl bg-brand-gold px-4 py-2.5 text-sm font-bold text-brand-navy transition hover:bg-brand-goldHover disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {saving ? 'Saving...' : 'Create Campaign'}
+                  <Plus size={16} />
+                  {saving ? 'Saving…' : 'Create Task'}
                 </button>
               </div>
             </form>
-          </div>
+          </section>
         </div>
       )}
-    </div>
+    </main>
   );
 }
