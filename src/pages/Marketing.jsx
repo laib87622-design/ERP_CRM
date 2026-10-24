@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CalendarDays, Filter, Plus, Rows3, Search, X } from 'lucide-react';
+import { CalendarDays, Expand, Filter, Minimize2, Plus, Rows3, Search, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 const TASK_FIELDS = [
@@ -90,12 +90,67 @@ function FieldControl({ field, value, onChange, id, compact = false, onBlur, onK
 function SpreadsheetCell({ task, field, onSave, agentOptions }) {
   const savedValue = normalizedValue(task[field.name], field.type);
   const [value, setValue] = useState(savedValue);
+  const [editing, setEditing] = useState(false);
 
   const save = async () => {
-    if (value === savedValue) return;
+    if (value === savedValue) {
+      setEditing(false);
+      return;
+    }
     const saved = await onSave(task.id, field.name, value);
     if (!saved) setValue(savedValue);
+    setEditing(false);
   };
+
+  const statusClass = field.name === 'status'
+    ? STATUS_COLORS[savedValue.toUpperCase()] || 'bg-slate-100 text-slate-700 ring-slate-200'
+    : '';
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(true)}
+        className="block min-h-9 w-full rounded-md px-2 py-2 text-left text-sm text-slate-700 transition hover:bg-white hover:ring-1 hover:ring-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-gold"
+        aria-label={`Edit ${field.label}: ${savedValue || 'empty'}`}
+      >
+        {field.name === 'status' && savedValue ? (
+          <span className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold tracking-wide ring-1 ring-inset ${statusClass}`}>
+            {savedValue}
+          </span>
+        ) : (
+          <span className={savedValue ? '' : 'text-slate-300'}>{savedValue || '—'}</span>
+        )}
+      </button>
+    );
+  }
+
+  if (field.options) {
+    return (
+      <select
+        autoFocus
+        value={field.options.includes(value) ? value : ''}
+        onChange={async (event) => {
+          const nextValue = event.target.value;
+          setValue(nextValue);
+          if (nextValue !== savedValue) await onSave(task.id, field.name, nextValue);
+          setEditing(false);
+        }}
+        onBlur={() => setEditing(false)}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            setValue(savedValue);
+            setEditing(false);
+          }
+        }}
+        className={`block ${field.width} max-w-full rounded-md border border-brand-gold bg-white px-2 py-2 text-sm text-slate-700 outline-none ring-2 ring-amber-100`}
+        aria-label={`Edit ${field.label}`}
+      >
+        <option value="">Select {field.label}</option>
+        {field.options.map((option) => <option key={option} value={option}>{option}</option>)}
+      </select>
+    );
+  }
 
   return (
     <FieldControl
@@ -103,10 +158,14 @@ function SpreadsheetCell({ task, field, onSave, agentOptions }) {
       value={value}
       onChange={setValue}
       onBlur={save}
+      options={field.name === 'agent' ? agentOptions : undefined}
       onKeyDown={(event) => {
+        if (event.key === 'Escape') {
+          setValue(savedValue);
+          setEditing(false);
+        }
         if (event.key === 'Enter') event.currentTarget.blur();
       }}
-      options={field.name === 'agent' ? agentOptions : field.options}
       id={`task-${task.id}-${field.name}`}
       compact
     />
@@ -125,6 +184,16 @@ export default function Marketing() {
   const [dayFilter, setDayFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [channelFilter, setChannelFilter] = useState('all');
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    if (!isFullscreen) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') setIsFullscreen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isFullscreen]);
 
   const savedDropdownOptions = useMemo(() => {
     const dropdownFields = TASK_FIELDS.filter((field) => field.options || field.name === 'agent');
@@ -298,14 +367,24 @@ export default function Marketing() {
           <h1 className="mt-2 font-serif text-3xl text-brand-navy">Marketing Tasks</h1>
           <p className="mt-1 text-sm text-slate-500">Plan, edit, and track your content in one place.</p>
         </div>
-        <button
-          type="button"
-          onClick={openForm}
-          className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl bg-brand-navy px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
-        >
-          <Plus size={17} />
-          New Campaign / Task
-        </button>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setIsFullscreen(true)}
+            className="inline-flex items-center gap-2 whitespace-nowrap rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
+          >
+            <Expand size={16} />
+            Expand to Fullscreen
+          </button>
+          <button
+            type="button"
+            onClick={openForm}
+            className="inline-flex items-center gap-2 whitespace-nowrap rounded-xl bg-brand-navy px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800"
+          >
+            <Plus size={17} />
+            New Campaign / Task
+          </button>
+        </div>
       </header>
 
       {error && (
@@ -314,7 +393,9 @@ export default function Marketing() {
         </div>
       )}
 
-      <section className="w-full min-w-0 max-w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <section className={isFullscreen
+        ? 'fixed inset-0 z-50 bg-white p-6 w-screen h-screen overflow-hidden flex flex-col'
+        : 'flex w-full min-w-0 max-w-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm'}>
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
           <div className="flex items-center gap-3">
             <span className="rounded-xl bg-amber-50 p-2.5 text-amber-700"><Rows3 size={18} /></span>
@@ -323,9 +404,21 @@ export default function Marketing() {
               <p className="text-xs text-slate-500">Edit cells directly; dropdowns also accept custom values.</p>
             </div>
           </div>
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-            {loading ? 'Loading…' : `${filteredTasks.length} of ${tasks.length} ${tasks.length === 1 ? 'task' : 'tasks'}`}
-          </span>
+          <div className="flex items-center gap-2">
+            {isFullscreen && (
+              <button
+                type="button"
+                onClick={() => setIsFullscreen(false)}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                <Minimize2 size={16} />
+                Exit Fullscreen
+              </button>
+            )}
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+              {loading ? 'Loading…' : `${filteredTasks.length} of ${tasks.length} ${tasks.length === 1 ? 'task' : 'tasks'}`}
+            </span>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 bg-white px-5 py-4">
@@ -373,9 +466,9 @@ export default function Marketing() {
           </select>
         </div>
 
-        <div className="w-full overflow-x-auto block">
+        <div className="block w-full min-h-0 flex-1 overflow-auto">
           <table className="w-max min-w-[1900px] border-collapse text-left">
-            <thead className="bg-slate-50">
+            <thead className="sticky top-0 z-20 bg-slate-50">
               <tr>
                 <th className="sticky left-0 z-10 w-12 border-b border-r border-slate-200 bg-slate-50 px-3 py-3 text-center text-[11px] font-semibold uppercase tracking-wider text-slate-400">#</th>
                 {TASK_FIELDS.map((field) => (
