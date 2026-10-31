@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CalendarDays, Expand, Filter, Minimize2, Plus, Rows3, Search, X } from 'lucide-react';
+import { CalendarDays, Expand, Filter, Minimize2, Plus, Rows3, Search, Trash2, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 const TASK_FIELDS = [
@@ -87,10 +87,12 @@ function FieldControl({ field, value, onChange, id, compact = false, onBlur, onK
   );
 }
 
-function SpreadsheetCell({ task, field, onSave, agentOptions }) {
+function SpreadsheetCell({ task, field, onSave, options }) {
   const savedValue = normalizedValue(task[field.name], field.type);
   const [value, setValue] = useState(savedValue);
   const [editing, setEditing] = useState(false);
+  const [customValue, setCustomValue] = useState('');
+  const [customMode, setCustomMode] = useState(false);
 
   const save = async () => {
     if (value === savedValue) {
@@ -126,20 +128,66 @@ function SpreadsheetCell({ task, field, onSave, agentOptions }) {
   }
 
   if (field.options) {
+    const saveCustomValue = async () => {
+      const nextValue = customValue.trim();
+      if (!nextValue) return;
+      const saved = await onSave(task.id, field.name, nextValue);
+      if (saved) {
+        setValue(nextValue);
+        setCustomMode(false);
+        setEditing(false);
+        setCustomValue('');
+      }
+    };
+
+    if (customMode) {
+      return (
+        <div className="flex min-w-48 items-center gap-1">
+          <input
+            autoFocus
+            value={customValue}
+            onChange={(event) => setCustomValue(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                saveCustomValue();
+              }
+              if (event.key === 'Escape') {
+                setCustomMode(false);
+                setCustomValue('');
+                setEditing(false);
+              }
+            }}
+            placeholder={`Enter ${field.label.toLowerCase()}`}
+            aria-label={`Enter custom ${field.label.toLowerCase()}`}
+            className="min-w-0 flex-1 rounded-md border border-brand-gold bg-white px-2 py-2 text-sm text-slate-700 outline-none ring-2 ring-amber-100"
+          />
+          <button
+            type="button"
+            onClick={saveCustomValue}
+            className="rounded-md bg-brand-navy px-2 py-2 text-xs font-semibold text-white hover:bg-slate-800"
+          >
+            Save
+          </button>
+        </div>
+      );
+    }
+
     return (
       <select
         autoFocus
-        value={field.options.includes(value) ? value : ''}
+        value={options.includes(savedValue) ? savedValue : ''}
         onChange={async (event) => {
           const nextValue = event.target.value;
-          setValue(nextValue);
+          if (nextValue === '__add_custom__') {
+            setCustomMode(true);
+            return;
+          }
           if (nextValue !== savedValue) await onSave(task.id, field.name, nextValue);
           setEditing(false);
         }}
-        onBlur={() => setEditing(false)}
         onKeyDown={(event) => {
           if (event.key === 'Escape') {
-            setValue(savedValue);
             setEditing(false);
           }
         }}
@@ -147,7 +195,8 @@ function SpreadsheetCell({ task, field, onSave, agentOptions }) {
         aria-label={`Edit ${field.label}`}
       >
         <option value="">Select {field.label}</option>
-        {field.options.map((option) => <option key={option} value={option}>{option}</option>)}
+        {options.map((option) => <option key={option} value={option}>{option}</option>)}
+        <option value="__add_custom__">+ Add custom value…</option>
       </select>
     );
   }
@@ -158,7 +207,7 @@ function SpreadsheetCell({ task, field, onSave, agentOptions }) {
       value={value}
       onChange={setValue}
       onBlur={save}
-      options={field.name === 'agent' ? agentOptions : undefined}
+      options={field.name === 'agent' ? options : undefined}
       onKeyDown={(event) => {
         if (event.key === 'Escape') {
           setValue(savedValue);
@@ -180,6 +229,7 @@ export default function Marketing() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [deletingTaskId, setDeletingTaskId] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [dayFilter, setDayFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -317,6 +367,35 @@ export default function Marketing() {
     } catch (updateError) {
       setError(updateError.message || 'Unable to update marketing task.');
       return false;
+    }
+  };
+
+  const deleteTask = async (task) => {
+    const headline = task.headline?.trim();
+    const confirmed = window.confirm(
+      `Delete ${headline ? `"${headline}"` : 'this marketing task'}? This cannot be undone.`,
+    );
+    if (!confirmed) return;
+
+    if (!supabase) {
+      setError('Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.');
+      return;
+    }
+
+    setDeletingTaskId(task.id);
+    setError('');
+    try {
+      const { error: deleteError } = await supabase
+        .from('marketing_tasks')
+        .delete()
+        .eq('id', task.id);
+
+      if (deleteError) throw deleteError;
+      setTasks((current) => current.filter((item) => item.id !== task.id));
+    } catch (deleteError) {
+      setError(deleteError.message || 'Unable to delete marketing task.');
+    } finally {
+      setDeletingTaskId(null);
     }
   };
 
@@ -490,18 +569,21 @@ export default function Marketing() {
                     {field.label}
                   </th>
                 ))}
+                <th className="sticky right-0 top-0 z-30 border-b border-l border-slate-200 bg-slate-100/95 px-3 py-3.5 text-center text-[10px] font-bold uppercase tracking-[0.16em] text-slate-500 backdrop-blur">
+                  Actions
+                </th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={TASK_FIELDS.length + 1} className="px-5 py-14 text-center text-sm text-slate-500">
+                  <td colSpan={TASK_FIELDS.length + 2} className="px-5 py-14 text-center text-sm text-slate-500">
                     Loading marketing tasks…
                   </td>
                 </tr>
               ) : tasks.length === 0 ? (
                 <tr>
-                  <td colSpan={TASK_FIELDS.length + 1} className="px-5 py-14 text-center">
+                  <td colSpan={TASK_FIELDS.length + 2} className="px-5 py-14 text-center">
                     <CalendarDays className="mx-auto mb-3 text-slate-300" size={25} />
                     <p className="font-medium text-slate-700">No marketing tasks yet</p>
                     <p className="mt-1 text-sm text-slate-500">Create a campaign or task to start filling in your board.</p>
@@ -509,7 +591,7 @@ export default function Marketing() {
                 </tr>
               ) : filteredTasks.length === 0 ? (
                 <tr>
-                  <td colSpan={TASK_FIELDS.length + 1} className="px-5 py-14 text-center text-sm text-slate-500">
+                  <td colSpan={TASK_FIELDS.length + 2} className="px-5 py-14 text-center text-sm text-slate-500">
                     No tasks match these filters.
                   </td>
                 </tr>
@@ -524,10 +606,22 @@ export default function Marketing() {
                         task={task}
                         field={field}
                         onSave={updateTask}
-                        agentOptions={savedDropdownOptions.agent}
+                        options={savedDropdownOptions[field.name]}
                       />
                     </td>
                   ))}
+                  <td className="sticky right-0 border-b border-l border-slate-100 bg-white px-2 py-1.5 text-center transition-colors group-hover:bg-amber-50/80">
+                    <button
+                      type="button"
+                      onClick={() => deleteTask(task)}
+                      disabled={deletingTaskId === task.id}
+                      aria-label={`Delete ${task.headline || 'marketing task'}`}
+                      title="Delete task"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
